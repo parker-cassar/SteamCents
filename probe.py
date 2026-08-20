@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,6 +14,8 @@ try:
         os.environ.setdefault(k.strip(), v.strip().strip("'").strip('"'))
 except FileNotFoundError:
     pass
+
+FIXTURES = pathlib.Path("tests/fixtures")
 
 
 def get(url):
@@ -30,12 +33,25 @@ def appdetails(ids):
     return get("https://store.steampowered.com/api/appdetails?" + q)
 
 
-def summarize(n, data):
-    if not isinstance(data, dict):
-        print("n=%s not a dict: %s" % (n, type(data).__name__))
-        return
+def applist_page(key, max_results=100, last_appid=0):
+    q = urllib.parse.urlencode({
+        "key": key,
+        "include_games": 1,
+        "include_dlc": 1,
+        "include_software": 1,
+        "include_videos": 1,
+        "include_hardware": 1,
+        "max_results": max_results,
+        "last_appid": last_appid,
+    })
+    resp = get("https://api.steampowered.com/IStoreService/GetAppList/v1/?" + q)["response"]
+    return resp.get("apps") or []
+
+
+def count_batch(data):
     ok = 0
     priced = 0
+    empty = 0
     for v in data.values():
         if not isinstance(v, dict):
             continue
@@ -44,42 +60,46 @@ def summarize(n, data):
         d = v.get("data")
         if isinstance(d, dict) and "price_overview" in d:
             priced += 1
-    print("n=%s returned=%s ok=%s priced=%s" % (n, len(data), ok, priced))
+        elif d == []:
+            empty += 1
+    return {
+        "returned": len(data),
+        "ok": ok,
+        "priced": priced,
+        "empty_data": empty,
+    }
 
 
-print("--- 413150,10,220 ---")
-print(json.dumps(appdetails([413150, 10, 220]), indent=2))
+def summarize(n, data):
+    c = count_batch(data)
+    print(f"n={n} returned={c['returned']} ok={c['ok']} priced={c['priced']} empty_data={c['empty_data']}")
+    return c
+
 
 key = os.environ.get("STEAM_WEB_API_KEY")
 if not key:
     raise SystemExit("set STEAM_WEB_API_KEY (https://steamcommunity.com/dev/apikey)")
 
-apps = []
-last = 0
-while True:
-    q = urllib.parse.urlencode({
-        "key": key,
-        "include_games": 1,
-        "include_dlc": 1,
-        "include_software": 1,
-        "include_videos": 1,
-        "include_hardware": 1,
-        "max_results": 50000,
-        "last_appid": last,
-    })
-    resp = get("https://api.steampowered.com/IStoreService/GetAppList/v1/?" + q)["response"]
-    batch = resp.get("apps") or []
-    apps.extend(batch)
-    if not resp.get("have_more_results") or not batch:
-        break
-    last = resp.get("last_appid") or batch[-1]["appid"]
-
-print(len(apps), "apps")
-print(json.dumps(apps[:5], indent=2))
+apps = applist_page(key, max_results=100)
+print(f"{len(apps)} apps from first GetAppList page")
 
 ids = [a["appid"] for a in apps]
-for n in (5, 10, 20, 50):
+for n in (5, 10, 20, 50, 100):
     try:
         summarize(n, appdetails(ids[:n]))
     except urllib.error.HTTPError as e:
-        print("n=%s http %s" % (n, e.code))
+        print(f"n={n} http {e.code}")
+
+
+# already done
+def save_batch_fixture(ids):
+    batch = appdetails(ids)
+    counts = count_batch(batch)
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+    (FIXTURES / "appdetails_batch_100.json").write_text(json.dumps(batch, indent=2) + "\n")
+    (FIXTURES / "appdetails_batch_100.expected.json").write_text(json.dumps({
+        "ids": ids,
+        **counts,
+    }, indent=2) + "\n")
+    print(f"wrote {FIXTURES / 'appdetails_batch_100.json'}")
+    print(f"wrote {FIXTURES / 'appdetails_batch_100.expected.json'} {counts}")
