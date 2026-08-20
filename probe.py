@@ -1,5 +1,6 @@
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -20,9 +21,34 @@ def get(url):
         return json.load(r)
 
 
-print(json.dumps(get(
-    "https://store.steampowered.com/api/appdetails?appids=413150&cc=us&filters=price_overview"
-), indent=2))
+def appdetails(ids):
+    q = urllib.parse.urlencode({
+        "appids": ",".join(str(i) for i in ids),
+        "cc": "us",
+        "filters": "price_overview",
+    })
+    return get("https://store.steampowered.com/api/appdetails?" + q)
+
+
+def summarize(n, data):
+    if not isinstance(data, dict):
+        print("n=%s not a dict: %s" % (n, type(data).__name__))
+        return
+    ok = 0
+    priced = 0
+    for v in data.values():
+        if not isinstance(v, dict):
+            continue
+        if v.get("success"):
+            ok += 1
+        d = v.get("data")
+        if isinstance(d, dict) and "price_overview" in d:
+            priced += 1
+    print("n=%s returned=%s ok=%s priced=%s" % (n, len(data), ok, priced))
+
+
+print("--- 413150,10,220 ---")
+print(json.dumps(appdetails([413150, 10, 220]), indent=2))
 
 key = os.environ.get("STEAM_WEB_API_KEY")
 if not key:
@@ -50,3 +76,10 @@ while True:
 
 print(len(apps), "apps")
 print(json.dumps(apps[:5], indent=2))
+
+ids = [a["appid"] for a in apps]
+for n in (5, 10, 20, 50):
+    try:
+        summarize(n, appdetails(ids[:n]))
+    except urllib.error.HTTPError as e:
+        print("n=%s http %s" % (n, e.code))
