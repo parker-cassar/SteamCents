@@ -71,14 +71,18 @@ def process_batch(conn, ids):
     raw = fetch_appdetails(ids)
     with conn.cursor() as cur:
         prev = last_prices(cur, ids)
-        deltas = 0
-        priced = 0
+        new = 0
+        updated = 0
+        no_response = 0
+        same = 0
         for appid in ids:
             price = parse_price(raw.get(str(appid)))
             if price is None:
+                no_response += 1
                 continue
-            priced += 1
-            if not changed(prev.get(appid), price):
+            old = prev.get(appid)
+            if old is not None and not changed(old, price):
+                same += 1
                 continue
             cur.execute(INSERT_OBS, (
                 appid,
@@ -92,16 +96,28 @@ def process_batch(conn, ids):
                 "UPDATE apps SET last_changed_at = now() WHERE appid = %s",
                 (appid,),
             )
-            deltas += 1
+            if old is None:
+                new += 1
+            else:
+                updated += 1
         stamp(cur, ids)
     conn.commit()
-    return priced, deltas
+    return {
+        "apps": len(ids),
+        "new": new,
+        "updated": updated,
+        "same": same,
+        "no_response": no_response,
+    }
 
 
 def run(once=False):
     sleep_s = 60.0 / config.RATE_PER_MIN
     checks = 0
-    deltas_total = 0
+    new_total = 0
+    updated_total = 0
+    same_total = 0
+    no_response_total = 0
     http_429 = 0
     batches = 0
 
@@ -122,7 +138,7 @@ def run(once=False):
                 continue
 
             try:
-                priced, deltas = process_batch(conn, ids)
+                stats = process_batch(conn, ids)
             except urllib.error.HTTPError as e:
                 if e.code == 429:
                     http_429 += 1
@@ -133,21 +149,33 @@ def run(once=False):
                     continue
                 raise
 
-        checks += len(ids)
-        deltas_total += deltas
+        checks += stats["apps"]
+        new_total += stats["new"]
+        updated_total += stats["updated"]
+        same_total += stats["same"]
+        no_response_total += stats["no_response"]
         batches += 1
         print(
-            f"batch={batches} apps={len(ids)} priced={priced} "
-            f"deltas={deltas} checks={checks} deltas_total={deltas_total} 429s={http_429}"
+            f"batch={batches} apps={stats['apps']} "
+            f"new={stats['new']} updated={stats['updated']} "
+            f"same={stats['same']} no_response={stats['no_response']} "
+            f"(sum={stats['new'] + stats['updated'] + stats['same'] + stats['no_response']}) "
+            f"429s={http_429}"
         )
 
         if once:
+            print(
+                f"done new={new_total} updated={updated_total} "
+                f"same={same_total} no_response={no_response_total} "
+                f"(sum={new_total + updated_total + same_total + no_response_total} "
+                f"of {checks})"
+            )
             return
 
         if batches % 10 == 0:
             print(
-                f"summary checks={checks} deltas={deltas_total} "
-                f"429s={http_429} rate={config.RATE_PER_MIN}/min"
+                f"summary checks={checks} new={new_total} updated={updated_total} "
+                f"same={same_total} no_response={no_response_total} 429s={http_429}"
             )
 
         time.sleep(sleep_s)
