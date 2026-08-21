@@ -1,4 +1,5 @@
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -32,3 +33,30 @@ def fetch_applist(key):
             break
         last = resp.get("last_appid") or batch[-1]["appid"]
     return apps
+
+
+def fetch_appdetails(ids, cc=None):
+    cc = cc or config.COUNTRY
+    q = urllib.parse.urlencode({
+        "appids": ",".join(str(i) for i in ids),
+        "cc": cc,
+        "filters": "price_overview",
+    })
+    return get("https://store.steampowered.com/api/appdetails?" + q)
+
+
+def parse_price(entry):
+    if not isinstance(entry, dict) or not entry.get("success"):
+        return None
+    data = entry.get("data")
+    if not isinstance(data, dict):
+        return None
+    po = data.get("price_overview")
+    if not isinstance(po, dict):
+        return None
+    return {
+        "currency": po["currency"],
+        "initial_cents": int(po["initial"]),
+        "final_cents": int(po["final"]),
+        "discount_pct": int(po["discount_percent"]),
+    }
