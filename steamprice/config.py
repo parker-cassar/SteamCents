@@ -16,3 +16,4 @@ USER_AGENT = "steamcents/0 (local v0; price history)"
 COUNTRY = "us"
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "100"))
 RATE_PER_MIN = float(os.environ.get("RATE_PER_MIN", "10"))
+LOG_DIR = os.environ.get("LOG_DIR", "logs")

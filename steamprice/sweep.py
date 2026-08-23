@@ -3,6 +3,7 @@ import time
 import urllib.error
 
 from steamprice import config, db
+from steamprice.log import setup
 from steamprice.steam import fetch_appdetails, parse_price
 
 CLAIM = """
@@ -120,6 +121,7 @@ def process_batch(conn, ids):
 
 
 def run(once=False):
+    log = setup("sweep")
     sleep_s = 60.0 / config.RATE_PER_MIN
     checks = 0
     new_total = 0
@@ -131,8 +133,8 @@ def run(once=False):
     streak = 0
     batches = 0
 
-    print(
-        f"sweep batch={config.BATCH_SIZE} rate={config.RATE_PER_MIN}/min "
+    log.info(
+        f"sweep start batch={config.BATCH_SIZE} rate={config.RATE_PER_MIN}/min "
         f"sleep={sleep_s:.1f}s cc={config.COUNTRY}"
     )
 
@@ -141,7 +143,7 @@ def run(once=False):
             with conn.cursor() as cur:
                 ids = claim(cur, config.BATCH_SIZE)
             if not ids:
-                print("no apps to check; sleeping")
+                log.info("no apps to check; sleeping")
                 time.sleep(sleep_s)
                 if once:
                     return
@@ -153,12 +155,12 @@ def run(once=False):
                 if isinstance(e, urllib.error.HTTPError) and e.code == 429:
                     http_429 += 1
                     wait = retry_after(e) or sleep_s * 5
-                    print(f"429 backoff {wait:.0f}s ({http_429} so far)")
+                    log.warning(f"429 backoff {wait:.0f}s ({http_429} so far)")
                 else:
                     errors += 1
                     streak += 1
                     wait = sleep_s * 2 ** min(streak, 4)
-                    print(f"batch failed, {wait:.0f}s: {e}")
+                    log.warning(f"batch failed, {wait:.0f}s: {e}")
                 time.sleep(wait)
                 if once:
                     return
@@ -171,7 +173,7 @@ def run(once=False):
         same_total += stats["same"]
         no_response_total += stats["no_response"]
         batches += 1
-        print(
+        log.info(
             f"batch={batches} apps={stats['apps']} "
             f"new={stats['new']} updated={stats['updated']} "
             f"same={stats['same']} no_response={stats['no_response']} "
@@ -180,7 +182,7 @@ def run(once=False):
         )
 
         if once:
-            print(
+            log.info(
                 f"done new={new_total} updated={updated_total} "
                 f"same={same_total} no_response={no_response_total} "
                 f"(sum={new_total + updated_total + same_total + no_response_total} "
@@ -189,7 +191,7 @@ def run(once=False):
             return
 
         if batches % 10 == 0:
-            print(
+            log.info(
                 f"summary checks={checks} new={new_total} updated={updated_total} "
                 f"same={same_total} no_response={no_response_total} "
                 f"429s={http_429} errors={errors}"

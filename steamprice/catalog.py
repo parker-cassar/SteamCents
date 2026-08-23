@@ -1,6 +1,7 @@
 import sys
 
 from steamprice import config, db
+from steamprice.log import setup
 from steamprice.steam import fetch_applist
 
 UPSERT = """
@@ -14,13 +15,14 @@ ON CONFLICT (appid) DO UPDATE SET
 
 
 def sync():
+    log = setup("catalog")
     key = config.STEAM_WEB_API_KEY
     if not key:
         raise SystemExit("set STEAM_WEB_API_KEY in .env")
 
-    print("fetching GetAppList...")
+    log.info("fetching GetAppList...")
     remote = fetch_applist(key)
-    print(f"got {len(remote)} apps from steam")
+    log.info(f"got {len(remote)} apps from steam")
 
     by_id = {}
     for a in remote:
@@ -65,7 +67,7 @@ def sync():
 
         conn.commit()
 
-    print(f"apps total={total} live={live} newly_delisted={delisted}")
+    log.info(f"apps total={total} live={live} newly_delisted={delisted}")
 
 
 def main():
