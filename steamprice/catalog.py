@@ -70,8 +70,8 @@ def sync():
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "migrate":
-        db.migrate()
-        print("migrated")
+        applied = db.migrate()
+        print("applied " + ", ".join(applied) if applied else "already up to date")
         return
     sync()
 
