@@ -56,6 +56,14 @@ def stamp(cur, ids):
     )
 
 
+def retry_after(e):
+    v = getattr(e, "headers", None) and e.headers.get("Retry-After")
+    try:
+        return min(float(v), 300.0)
+    except (TypeError, ValueError):
+        return None
+
+
 def changed(prev, cur):
     if prev is None:
         return True
@@ -119,6 +127,8 @@ def run(once=False):
     same_total = 0
     no_response_total = 0
     http_429 = 0
+    errors = 0
+    streak = 0
     batches = 0
 
     print(
@@ -139,16 +149,22 @@ def run(once=False):
 
             try:
                 stats = process_batch(conn, ids)
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
+            except (OSError, ValueError) as e:
+                if isinstance(e, urllib.error.HTTPError) and e.code == 429:
                     http_429 += 1
-                    print(f"429 backoff ({http_429} so far)")
-                    time.sleep(sleep_s * 5)
-                    if once:
-                        return
-                    continue
-                raise
+                    wait = retry_after(e) or sleep_s * 5
+                    print(f"429 backoff {wait:.0f}s ({http_429} so far)")
+                else:
+                    errors += 1
+                    streak += 1
+                    wait = sleep_s * 2 ** min(streak, 4)
+                    print(f"batch failed, {wait:.0f}s: {e}")
+                time.sleep(wait)
+                if once:
+                    return
+                continue
 
+        streak = 0
         checks += stats["apps"]
         new_total += stats["new"]
         updated_total += stats["updated"]
@@ -175,7 +191,8 @@ def run(once=False):
         if batches % 10 == 0:
             print(
                 f"summary checks={checks} new={new_total} updated={updated_total} "
-                f"same={same_total} no_response={no_response_total} 429s={http_429}"
+                f"same={same_total} no_response={no_response_total} "
+                f"429s={http_429} errors={errors}"
             )
 
         time.sleep(sleep_s)

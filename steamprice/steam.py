@@ -1,15 +1,35 @@
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from steamprice import config
 
+TIMEOUT = 30
+RETRY_CODES = {408, 500, 502, 503, 504}
 
-def get(url):
-    req = urllib.request.Request(url, headers={"User-Agent": config.USER_AGENT})
-    with urllib.request.urlopen(req) as r:
-        return json.load(r)
+
+def get(url, tries=4):
+    delay = 2.0
+    for attempt in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": config.USER_AGENT})
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            # 429 is the caller's problem, it needs to slow the whole sweep down
+            if e.code not in RETRY_CODES:
+                raise
+            err = e
+        except (OSError, ValueError) as e:
+            # dropped connections, timeouts, and the html error pages steam
+            # sometimes serves instead of json
+            err = e
+        if attempt == tries - 1:
+            raise err
+        time.sleep(delay)
+        delay *= 2
 
 
 def fetch_applist(key):
