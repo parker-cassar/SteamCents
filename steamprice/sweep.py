@@ -6,10 +6,12 @@ from steamprice import config, db
 from steamprice.log import setup
 from steamprice.steam import fetch_appdetails, parse_price
 
-CLAIM = """
+MAX_FAILURES = 5  # keep in sync with the apps_sweep index
+
+CLAIM = f"""
 SELECT appid
 FROM apps
-WHERE delisted_at IS NULL
+WHERE delisted_at IS NULL AND consecutive_failures < {MAX_FAILURES}
 ORDER BY last_checked_at NULLS FIRST, appid
 LIMIT %s
 """
@@ -35,6 +37,54 @@ def claim(cur, n):
     return [r[0] for r in cur.fetchall()]
 
 
+def start_run(conn):
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO sweep_runs DEFAULT VALUES RETURNING id")
+        run_id = cur.fetchone()[0]
+    conn.commit()
+    return run_id
+
+
+def beat(conn, run_id, batches, checks, changes, http_429, errors):
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE sweep_runs
+            SET heartbeat_at = now(), batches = %s, apps_checked = %s,
+                changes = %s, http_429s = %s, errors = %s
+            WHERE id = %s
+        """, (batches, checks, changes, http_429, errors, run_id))
+    conn.commit()
+
+
+def end_run(run_id, reason):
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE sweep_runs SET ended_at = now(), exit_reason = %s WHERE id = %s",
+                (reason, run_id),
+            )
+        conn.commit()
+
+
+def status():
+    with db.connect() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, started_at, heartbeat_at, ended_at, exit_reason,
+                   batches, apps_checked, changes, http_429s, errors,
+                   now() - heartbeat_at
+            FROM sweep_runs ORDER BY id DESC LIMIT 5
+        """)
+        for r in cur.fetchall():
+            state = r[4] or ("running" if r[3] is None else "?")
+            print(
+                f"run={r[0]} {state} started={r[1]:%Y-%m-%d %H:%M} "
+                f"batches={r[5]} checks={r[6]} changes={r[7]} "
+                f"429s={r[8]} errors={r[9]} last_beat={str(r[10]).split('.')[0]} ago"
+            )
+        cur.execute(f"SELECT count(*) FROM apps WHERE consecutive_failures >= {MAX_FAILURES}")
+        print(f"parked appids: {cur.fetchone()[0]}")
+
+
 def last_prices(cur, ids):
     if not ids:
         return {}
@@ -50,11 +100,27 @@ def last_prices(cur, ids):
     return out
 
 
-def stamp(cur, ids):
+def stamp(cur, ids, missing):
+    # stamping everything, answered or not, is what stops a broken appid from
+    # sitting at the front of the ordering forever
     cur.execute(
         "UPDATE apps SET last_checked_at = now() WHERE appid = ANY(%s)",
         (ids,),
     )
+    missing = list(missing)
+    answered = [i for i in ids if i not in set(missing)]
+    if answered:
+        cur.execute(
+            "UPDATE apps SET consecutive_failures = 0 "
+            "WHERE appid = ANY(%s) AND consecutive_failures > 0",
+            (answered,),
+        )
+    if missing:
+        cur.execute(
+            "UPDATE apps SET consecutive_failures = consecutive_failures + 1 "
+            f"WHERE appid = ANY(%s) AND consecutive_failures < {MAX_FAILURES}",
+            (missing,),
+        )
 
 
 def retry_after(e):
@@ -82,12 +148,12 @@ def process_batch(conn, ids):
         prev = last_prices(cur, ids)
         new = 0
         updated = 0
-        no_response = 0
         same = 0
+        missing = set()
         for appid in ids:
             price = parse_price(raw.get(str(appid)))
             if price is None:
-                no_response += 1
+                missing.add(appid)
                 continue
             old = prev.get(appid)
             if old is not None and not changed(old, price):
@@ -109,14 +175,14 @@ def process_batch(conn, ids):
                 new += 1
             else:
                 updated += 1
-        stamp(cur, ids)
+        stamp(cur, ids, missing)
     conn.commit()
     return {
         "apps": len(ids),
         "new": new,
         "updated": updated,
         "same": same,
-        "no_response": no_response,
+        "no_response": len(missing),
     }
 
 
@@ -133,76 +199,94 @@ def run(once=False):
     streak = 0
     batches = 0
 
+    with db.connect() as conn:
+        run_id = start_run(conn)
+
     log.info(
-        f"sweep start batch={config.BATCH_SIZE} rate={config.RATE_PER_MIN}/min "
-        f"sleep={sleep_s:.1f}s cc={config.COUNTRY}"
+        f"sweep start run={run_id} batch={config.BATCH_SIZE} "
+        f"rate={config.RATE_PER_MIN}/min sleep={sleep_s:.1f}s cc={config.COUNTRY}"
     )
 
-    while True:
-        with db.connect() as conn:
-            with conn.cursor() as cur:
-                ids = claim(cur, config.BATCH_SIZE)
-            if not ids:
-                log.info("no apps to check; sleeping")
-                time.sleep(sleep_s)
-                if once:
-                    return
-                continue
+    reason = "crash"
+    try:
+        while True:
+            with db.connect() as conn:
+                with conn.cursor() as cur:
+                    ids = claim(cur, config.BATCH_SIZE)
+                if not ids:
+                    log.info("no apps to check; sleeping")
+                    if once:
+                        reason = "no work"
+                        break
+                    time.sleep(sleep_s)
+                    continue
 
-            try:
-                stats = process_batch(conn, ids)
-            except (OSError, ValueError) as e:
-                if isinstance(e, urllib.error.HTTPError) and e.code == 429:
-                    http_429 += 1
-                    wait = retry_after(e) or sleep_s * 5
-                    log.warning(f"429 backoff {wait:.0f}s ({http_429} so far)")
-                else:
-                    errors += 1
-                    streak += 1
-                    wait = sleep_s * 2 ** min(streak, 4)
-                    log.warning(f"batch failed, {wait:.0f}s: {e}")
-                time.sleep(wait)
-                if once:
-                    return
-                continue
+                try:
+                    stats = process_batch(conn, ids)
+                except (OSError, ValueError) as e:
+                    if isinstance(e, urllib.error.HTTPError) and e.code == 429:
+                        http_429 += 1
+                        wait = retry_after(e) or sleep_s * 5
+                        log.warning(f"429 backoff {wait:.0f}s ({http_429} so far)")
+                        reason = "429"
+                    else:
+                        errors += 1
+                        streak += 1
+                        wait = sleep_s * 2 ** min(streak, 4)
+                        log.warning(f"batch failed, {wait:.0f}s: {e}")
+                        reason = "error"
+                    beat(conn, run_id, batches, checks, new_total + updated_total,
+                         http_429, errors)
+                    if once:
+                        break
+                    time.sleep(wait)
+                    continue
 
-        streak = 0
-        checks += stats["apps"]
-        new_total += stats["new"]
-        updated_total += stats["updated"]
-        same_total += stats["same"]
-        no_response_total += stats["no_response"]
-        batches += 1
-        log.info(
-            f"batch={batches} apps={stats['apps']} "
-            f"new={stats['new']} updated={stats['updated']} "
-            f"same={stats['same']} no_response={stats['no_response']} "
-            f"(sum={stats['new'] + stats['updated'] + stats['same'] + stats['no_response']}) "
-            f"429s={http_429}"
-        )
+                streak = 0
+                checks += stats["apps"]
+                new_total += stats["new"]
+                updated_total += stats["updated"]
+                same_total += stats["same"]
+                no_response_total += stats["no_response"]
+                batches += 1
+                beat(conn, run_id, batches, checks, new_total + updated_total,
+                     http_429, errors)
 
-        if once:
             log.info(
-                f"done new={new_total} updated={updated_total} "
-                f"same={same_total} no_response={no_response_total} "
-                f"(sum={new_total + updated_total + same_total + no_response_total} "
-                f"of {checks})"
-            )
-            return
-
-        if batches % 10 == 0:
-            log.info(
-                f"summary checks={checks} new={new_total} updated={updated_total} "
-                f"same={same_total} no_response={no_response_total} "
-                f"429s={http_429} errors={errors}"
+                f"batch={batches} apps={stats['apps']} "
+                f"new={stats['new']} updated={stats['updated']} "
+                f"same={stats['same']} no_response={stats['no_response']} "
+                f"(sum={stats['new'] + stats['updated'] + stats['same'] + stats['no_response']}) "
+                f"429s={http_429}"
             )
 
-        time.sleep(sleep_s)
+            if once:
+                reason = "once"
+                log.info(
+                    f"done new={new_total} updated={updated_total} "
+                    f"same={same_total} no_response={no_response_total} "
+                    f"(sum={new_total + updated_total + same_total + no_response_total} "
+                    f"of {checks})"
+                )
+                break
+
+            if batches % 10 == 0:
+                log.info(
+                    f"summary checks={checks} new={new_total} updated={updated_total} "
+                    f"same={same_total} no_response={no_response_total} "
+                    f"429s={http_429} errors={errors}"
+                )
+
+            time.sleep(sleep_s)
+    finally:
+        end_run(run_id, reason)
 
 
 def main():
-    once = "--once" in sys.argv
-    run(once=once)
+    if "--status" in sys.argv:
+        status()
+        return
+    run(once="--once" in sys.argv)
 
 
 if __name__ == "__main__":
