@@ -1,5 +1,6 @@
+import signal
 import sys
-import time
+import threading
 import urllib.error
 
 from steamprice import config, db
@@ -7,6 +8,13 @@ from steamprice.log import setup
 from steamprice.steam import fetch_appdetails, parse_price
 
 MAX_FAILURES = 5  # keep in sync with the apps_sweep index
+
+STOP = threading.Event()
+
+
+def nap(seconds):
+    # wakes early on sigterm so a long backoff does not hold up shutdown
+    STOP.wait(seconds)
 
 CLAIM = f"""
 SELECT appid
@@ -188,6 +196,9 @@ def process_batch(conn, ids):
 
 def run(once=False):
     log = setup("sweep")
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: STOP.set())
+
     sleep_s = 60.0 / config.RATE_PER_MIN
     checks = 0
     new_total = 0
@@ -210,6 +221,11 @@ def run(once=False):
     reason = "crash"
     try:
         while True:
+            if STOP.is_set():
+                reason = "stopped"
+                log.info(f"stopping after {batches} batches")
+                break
+
             with db.connect() as conn:
                 with conn.cursor() as cur:
                     ids = claim(cur, config.BATCH_SIZE)
@@ -218,7 +234,7 @@ def run(once=False):
                     if once:
                         reason = "no work"
                         break
-                    time.sleep(sleep_s)
+                    nap(sleep_s)
                     continue
 
                 try:
@@ -239,7 +255,7 @@ def run(once=False):
                          http_429, errors)
                     if once:
                         break
-                    time.sleep(wait)
+                    nap(wait)
                     continue
 
                 streak = 0
@@ -277,7 +293,7 @@ def run(once=False):
                     f"429s={http_429} errors={errors}"
                 )
 
-            time.sleep(sleep_s)
+            nap(sleep_s)
     finally:
         end_run(run_id, reason)
 
