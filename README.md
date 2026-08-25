@@ -18,11 +18,33 @@ python3 -m steamprice.sweep --once   # or drop --once to leave it running
 
 Get a free Web API key at https://steamcommunity.com/dev/apikey
 
+## Leaving it running (macOS)
+
+```bash
+sed "s|__REPO__|$PWD|g" ops/com.steamcents.sweep.plist.template \
+  > ~/Library/LaunchAgents/com.steamcents.sweep.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.steamcents.sweep.plist
+
+python3 -m steamprice.sweep --status   # runs, heartbeat, parked appids
+tail -f logs/sweep.log
+```
+
+launchd restarts it if it dies, `caffeinate -is` keeps the machine from sleeping on
+AC power, and SIGTERM finishes the current batch before exiting. Closing the lid
+still sleeps the machine, so leave it open.
+
+To stop it:
+
+```bash
+launchctl bootout gui/$(id -u)/com.steamcents.sweep
+```
+
 ## Layout
 
 ```
 steamprice/     catalog + sweep
 migrations/     apps + price_observations
+ops/            launchd plist + run script
 tests/          fixtures + parse tests
 probe.py        early Steam API experiments
 ```
