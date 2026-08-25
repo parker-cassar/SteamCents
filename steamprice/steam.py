@@ -65,8 +65,14 @@ def fetch_appdetails(ids, cc=None):
     return get("https://store.steampowered.com/api/appdetails?" + q)
 
 
+def answered(entry):
+    # steam says data: [] for free games, videos, hardware and most dlc. that is
+    # a real answer, not a dropped appid, and the two used to look identical here
+    return isinstance(entry, dict) and bool(entry.get("success"))
+
+
 def parse_price(entry):
-    if not isinstance(entry, dict) or not entry.get("success"):
+    if not answered(entry):
         return None
     data = entry.get("data")
     if not isinstance(data, dict):

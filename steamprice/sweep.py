@@ -5,7 +5,7 @@ import urllib.error
 
 from steamprice import config, db
 from steamprice.log import setup
-from steamprice.steam import fetch_appdetails, parse_price
+from steamprice.steam import answered, fetch_appdetails, parse_price
 
 MAX_FAILURES = 5  # keep in sync with the apps_sweep index
 
@@ -108,7 +108,7 @@ def last_prices(cur, ids):
     return out
 
 
-def stamp(cur, ids, missing):
+def stamp(cur, ids, missing, unpriced):
     # stamping everything, answered or not, is what stops a broken appid from
     # sitting at the front of the ordering forever
     cur.execute(
@@ -116,12 +116,18 @@ def stamp(cur, ids, missing):
         (ids,),
     )
     missing = list(missing)
-    answered = [i for i in ids if i not in set(missing)]
-    if answered:
+    gone = set(missing)
+    ok = [i for i in ids if i not in gone]
+    if ok:
         cur.execute(
             "UPDATE apps SET consecutive_failures = 0 "
             "WHERE appid = ANY(%s) AND consecutive_failures > 0",
-            (answered,),
+            (ok,),
+        )
+    if unpriced:
+        cur.execute(
+            "UPDATE apps SET no_price_seen_at = now() WHERE appid = ANY(%s)",
+            (list(unpriced),),
         )
     if missing:
         cur.execute(
@@ -158,10 +164,15 @@ def process_batch(conn, ids):
         updated = 0
         same = 0
         missing = set()
+        unpriced = set()
         for appid in ids:
-            price = parse_price(raw.get(str(appid)))
+            entry = raw.get(str(appid))
+            price = parse_price(entry)
             if price is None:
-                missing.add(appid)
+                if answered(entry):
+                    unpriced.add(appid)
+                else:
+                    missing.add(appid)
                 continue
             old = prev.get(appid)
             if old is not None and not changed(old, price):
@@ -183,13 +194,14 @@ def process_batch(conn, ids):
                 new += 1
             else:
                 updated += 1
-        stamp(cur, ids, missing)
+        stamp(cur, ids, missing, unpriced)
     conn.commit()
     return {
         "apps": len(ids),
         "new": new,
         "updated": updated,
         "same": same,
+        "unpriced": len(unpriced),
         "no_response": len(missing),
     }
 
@@ -204,6 +216,7 @@ def run(once=False):
     new_total = 0
     updated_total = 0
     same_total = 0
+    unpriced_total = 0
     no_response_total = 0
     http_429 = 0
     errors = 0
@@ -263,6 +276,7 @@ def run(once=False):
                 new_total += stats["new"]
                 updated_total += stats["updated"]
                 same_total += stats["same"]
+                unpriced_total += stats["unpriced"]
                 no_response_total += stats["no_response"]
                 batches += 1
                 beat(conn, run_id, batches, checks, new_total + updated_total,
@@ -271,8 +285,9 @@ def run(once=False):
             log.info(
                 f"batch={batches} apps={stats['apps']} "
                 f"new={stats['new']} updated={stats['updated']} "
-                f"same={stats['same']} no_response={stats['no_response']} "
-                f"(sum={stats['new'] + stats['updated'] + stats['same'] + stats['no_response']}) "
+                f"same={stats['same']} unpriced={stats['unpriced']} "
+                f"no_response={stats['no_response']} "
+                f"(sum={stats['new'] + stats['updated'] + stats['same'] + stats['unpriced'] + stats['no_response']}) "
                 f"429s={http_429}"
             )
 
@@ -280,8 +295,9 @@ def run(once=False):
                 reason = "once"
                 log.info(
                     f"done new={new_total} updated={updated_total} "
-                    f"same={same_total} no_response={no_response_total} "
-                    f"(sum={new_total + updated_total + same_total + no_response_total} "
+                    f"same={same_total} unpriced={unpriced_total} "
+                    f"no_response={no_response_total} "
+                    f"(sum={new_total + updated_total + same_total + unpriced_total + no_response_total} "
                     f"of {checks})"
                 )
                 break
@@ -289,7 +305,8 @@ def run(once=False):
             if batches % 10 == 0:
                 log.info(
                     f"summary checks={checks} new={new_total} updated={updated_total} "
-                    f"same={same_total} no_response={no_response_total} "
+                    f"same={same_total} unpriced={unpriced_total} "
+                    f"no_response={no_response_total} "
                     f"429s={http_429} errors={errors}"
                 )
 
