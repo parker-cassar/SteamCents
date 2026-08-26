@@ -212,13 +212,14 @@ def process_batch(conn, ids):
                 price["final_cents"],
                 price["discount_pct"],
             ))
-            cur.execute(
-                "UPDATE apps SET last_changed_at = now() WHERE appid = %s",
-                (appid,),
-            )
             if old is None:
                 new += 1
             else:
+                # first observation is not a change, it is just the first look
+                cur.execute(
+                    "UPDATE apps SET last_changed_at = now() WHERE appid = %s",
+                    (appid,),
+                )
                 updated += 1
         stamp(cur, ids, missing, unpriced)
         retier(cur, ids, priced, datetime.now(timezone.utc))
