@@ -17,3 +17,11 @@ COUNTRY = "us"
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "100"))
 RATE_PER_MIN = float(os.environ.get("RATE_PER_MIN", "10"))
 LOG_DIR = os.environ.get("LOG_DIR", "logs")
+
+MAX_FAILURES = int(os.environ.get("MAX_FAILURES", "5"))
+
+# recheck cadence per tier, in hours. this is politeness, not budget: at 10
+# requests a minute times 100 ids the whole catalog fits in about four hours.
+# retune once there is a week of real change data to look at.
+TIER_HOURS = {0: 6, 1: 24, 2: 24 * 7}
+CHANGED_RECENTLY_DAYS = 14

@@ -2,12 +2,14 @@ import signal
 import sys
 import threading
 import urllib.error
+from datetime import datetime, timezone
 
-from steamprice import config, db
+from steamprice import config, db, schedule
 from steamprice.log import setup
 from steamprice.steam import answered, fetch_appdetails, parse_price
 
-MAX_FAILURES = 5  # keep in sync with the apps_sweep index
+MAX_FAILURES = config.MAX_FAILURES
+IDLE_SLEEP = 60.0
 
 STOP = threading.Event()
 
@@ -16,11 +18,11 @@ def nap(seconds):
     # wakes early on sigterm so a long backoff does not hold up shutdown
     STOP.wait(seconds)
 
-CLAIM = f"""
+CLAIM = """
 SELECT appid
 FROM apps
-WHERE delisted_at IS NULL AND consecutive_failures < {MAX_FAILURES}
-ORDER BY last_checked_at NULLS FIRST, appid
+WHERE delisted_at IS NULL AND next_due_at <= now()
+ORDER BY next_due_at, appid
 LIMIT %s
 """
 
@@ -91,6 +93,12 @@ def status():
             )
         cur.execute(f"SELECT count(*) FROM apps WHERE consecutive_failures >= {MAX_FAILURES}")
         print(f"parked appids: {cur.fetchone()[0]}")
+        cur.execute("""
+            SELECT tier, count(*), count(*) FILTER (WHERE next_due_at <= now())
+            FROM apps WHERE delisted_at IS NULL GROUP BY tier ORDER BY tier
+        """)
+        for tier, n, due in cur.fetchall():
+            print(f"tier {tier}: {n} apps, {due} due now")
 
 
 def last_prices(cur, ids):
@@ -137,6 +145,22 @@ def stamp(cur, ids, missing, unpriced):
         )
 
 
+def retier(cur, ids, priced, now):
+    cur.execute(
+        "SELECT appid, last_changed_at, consecutive_failures FROM apps WHERE appid = ANY(%s)",
+        (ids,),
+    )
+    buckets = {}
+    for appid, last_changed, failures in cur.fetchall():
+        tier = schedule.classify(appid in priced, last_changed, now, failures)
+        buckets.setdefault(tier, []).append(appid)
+    for tier, group in buckets.items():
+        cur.execute(
+            "UPDATE apps SET tier = %s, next_due_at = %s WHERE appid = ANY(%s)",
+            (tier, schedule.next_due(tier, now), group),
+        )
+
+
 def retry_after(e):
     v = getattr(e, "headers", None) and e.headers.get("Retry-After")
     try:
@@ -165,6 +189,7 @@ def process_batch(conn, ids):
         same = 0
         missing = set()
         unpriced = set()
+        priced = set()
         for appid in ids:
             entry = raw.get(str(appid))
             price = parse_price(entry)
@@ -174,6 +199,7 @@ def process_batch(conn, ids):
                 else:
                     missing.add(appid)
                 continue
+            priced.add(appid)
             old = prev.get(appid)
             if old is not None and not changed(old, price):
                 same += 1
@@ -195,6 +221,7 @@ def process_batch(conn, ids):
             else:
                 updated += 1
         stamp(cur, ids, missing, unpriced)
+        retier(cur, ids, priced, datetime.now(timezone.utc))
     conn.commit()
     return {
         "apps": len(ids),
@@ -222,6 +249,7 @@ def run(once=False):
     errors = 0
     streak = 0
     batches = 0
+    idling = False
 
     with db.connect() as conn:
         run_id = start_run(conn)
@@ -243,12 +271,16 @@ def run(once=False):
                 with conn.cursor() as cur:
                     ids = claim(cur, config.BATCH_SIZE)
                 if not ids:
-                    log.info("no apps to check; sleeping")
                     if once:
+                        log.info("nothing due")
                         reason = "no work"
                         break
-                    nap(sleep_s)
+                    if not idling:
+                        log.info(f"nothing due, checking every {IDLE_SLEEP:.0f}s")
+                        idling = True
+                    nap(IDLE_SLEEP)
                     continue
+                idling = False
 
                 try:
                     stats = process_batch(conn, ids)
