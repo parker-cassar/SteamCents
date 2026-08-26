@@ -14,32 +14,44 @@ ON CONFLICT (appid) DO UPDATE SET
 """
 
 
-def sync():
-    log = setup("catalog")
-    key = config.STEAM_WEB_API_KEY
-    if not key:
-        raise SystemExit("set STEAM_WEB_API_KEY in .env")
+class Guard(Exception):
+    pass
 
-    log.info("fetching GetAppList...")
-    remote = fetch_applist(key)
-    log.info(f"got {len(remote)} apps from steam")
 
-    by_id = {}
-    for a in remote:
-        appid = a["appid"]
-        by_id[appid] = a.get("name") or f"appid:{appid}"
-    rows = list(by_id.items())
-    ids = list(by_id)
+def start_run():
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO catalog_runs DEFAULT VALUES RETURNING id")
+            run_id = cur.fetchone()[0]
+        conn.commit()
+    return run_id
 
+
+def end_run(run_id, reason, counts=None, note=None):
+    c = counts or {}
+    with db.connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE catalog_runs
+                SET ended_at = now(), exit_reason = %s, remote_apps = %s,
+                    total = %s, live = %s, newly_delisted = %s, note = %s
+                WHERE id = %s
+            """, (
+                reason, c.get("remote", 0), c.get("total", 0), c.get("live", 0),
+                c.get("delisted", 0), note, run_id,
+            ))
+        conn.commit()
+
+
+def write(rows, ids, counts):
     with db.connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM apps WHERE delisted_at IS NULL")
             live_before = cur.fetchone()[0]
 
             if live_before and len(rows) < 0.9 * live_before:
-                raise SystemExit(
-                    f"catalog guard: steam returned {len(rows)}, live db has {live_before} "
-                    f"(under 90%). not writing."
+                raise Guard(
+                    f"steam returned {len(rows)}, live db has {live_before} (under 90%)"
                 )
 
             cur.execute("CREATE TEMP TABLE catalog_seen (appid integer PRIMARY KEY) ON COMMIT DROP")
@@ -58,22 +70,80 @@ def sync():
                     SELECT 1 FROM catalog_seen s WHERE s.appid = apps.appid
                   )
             """)
-            delisted = cur.rowcount
+            counts["delisted"] = cur.rowcount
 
             cur.execute("SELECT count(*) FROM apps WHERE delisted_at IS NULL")
-            live = cur.fetchone()[0]
+            counts["live"] = cur.fetchone()[0]
             cur.execute("SELECT count(*) FROM apps")
-            total = cur.fetchone()[0]
+            counts["total"] = cur.fetchone()[0]
 
         conn.commit()
 
-    log.info(f"apps total={total} live={live} newly_delisted={delisted}")
+
+def sync():
+    log = setup("catalog")
+    key = config.STEAM_WEB_API_KEY
+    if not key:
+        raise SystemExit("set STEAM_WEB_API_KEY in .env")
+
+    run_id = start_run()
+    counts = {}
+    reason = "crash"
+    note = None
+    try:
+        log.info("fetching GetAppList...")
+        remote = fetch_applist(key)
+        counts["remote"] = len(remote)
+        log.info(f"got {len(remote)} apps from steam")
+
+        by_id = {}
+        for a in remote:
+            appid = a["appid"]
+            by_id[appid] = a.get("name") or f"appid:{appid}"
+
+        write(list(by_id.items()), list(by_id), counts)
+        reason = "ok"
+        log.info(
+            f"apps total={counts['total']} live={counts['live']} "
+            f"newly_delisted={counts['delisted']}"
+        )
+    except Guard as e:
+        reason = "guard"
+        note = str(e)
+        log.error(f"catalog guard: {e}. not writing.")
+        raise SystemExit(1)
+    except Exception as e:
+        reason = "error"
+        note = f"{type(e).__name__}: {e}"
+        log.exception("catalog sync failed")
+        raise
+    finally:
+        end_run(run_id, reason, counts, note)
+
+
+def status():
+    with db.connect() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, started_at, exit_reason, remote_apps, total, live,
+                   newly_delisted, note, now() - started_at
+            FROM catalog_runs ORDER BY id DESC LIMIT 5
+        """)
+        for r in cur.fetchall():
+            line = (
+                f"run={r[0]} {r[2] or 'running'} started={r[1]:%Y-%m-%d %H:%M} "
+                f"remote={r[3]} total={r[4]} live={r[5]} delisted={r[6]} "
+                f"({str(r[8]).split('.')[0]} ago)"
+            )
+            print(line + (f" note={r[7]}" if r[7] else ""))
 
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "migrate":
         applied = db.migrate()
         print("applied " + ", ".join(applied) if applied else "already up to date")
+        return
+    if "--status" in sys.argv:
+        status()
         return
     sync()
 
