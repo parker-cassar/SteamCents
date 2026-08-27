@@ -1,0 +1,8 @@
+[Unit]
+Description=steamcents nightly postgres dump
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/steamcents
+ExecStart=/opt/steamcents/ops/backup.sh

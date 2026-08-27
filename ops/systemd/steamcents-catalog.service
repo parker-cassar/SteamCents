@@ -1,0 +1,11 @@
+[Unit]
+Description=steamcents daily catalog sync
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/steamcents
+Environment=PYTHONPATH=/opt/steamcents
+ExecStart=/usr/bin/python3 -m steamprice.catalog

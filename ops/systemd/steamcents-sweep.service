@@ -1,0 +1,20 @@
+[Unit]
+Description=steamcents price sweep
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/steamcents
+Environment=PYTHONPATH=/opt/steamcents
+ExecStart=/usr/bin/python3 -m steamprice.sweep
+Restart=always
+RestartSec=30
+# the sweep closes its sweep_runs row on sigterm, so give it room to finish
+# the batch it is holding instead of killing it mid-write
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

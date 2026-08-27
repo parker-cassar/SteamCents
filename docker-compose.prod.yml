@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: steamcents
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: steamcents
+    # loopback only. the sweep runs on the host under systemd, and nothing
+    # outside the box should ever reach postgres.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steamcents -d steamcents"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    shm_size: 256mb
+
+volumes:
+  pgdata:
