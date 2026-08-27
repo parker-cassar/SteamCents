@@ -1,0 +1,54 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+users:
+  - name: deploy
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - ${ssh_key}
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - postgresql-client
+  - ufw
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-steamcents.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin no
+  - path: /opt/steamcents.env
+    permissions: "0640"
+    owner: root:root
+    content: |
+      API_DOMAIN=${api_domain}
+      ACME_EMAIL=${acme_email}
+
+runcmd:
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - usermod -aG docker deploy
+  - systemctl enable --now docker
+  # the hcloud firewall already does this, ufw is the second lock in case the
+  # firewall is ever detached from the server by hand
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - git clone ${repo_url} /opt/steamcents
+  - chown -R deploy:deploy /opt/steamcents
+  - install -d -o deploy -g deploy /opt/steamcents/backups /opt/steamcents/logs
+  - systemctl restart ssh
+
+final_message: "steamcents box up after $UPTIME seconds. finish with DEPLOY.md."
