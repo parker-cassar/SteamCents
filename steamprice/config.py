@@ -25,3 +25,10 @@ MAX_FAILURES = int(os.environ.get("MAX_FAILURES", "5"))
 # retune once there is a week of real change data to look at.
 TIER_HOURS = {0: 6, 1: 24, 2: 24 * 7}
 CHANGED_RECENTLY_DAYS = 14
+
+API_ORIGINS = [
+    o.strip() for o in os.environ.get(
+        "API_ORIGINS",
+        "https://steamcents.com,https://www.steamcents.com,http://localhost:3000",
+    ).split(",") if o.strip()
+]
