@@ -7,12 +7,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: steamcents
+          POSTGRES_PASSWORD: steamcents
+          POSTGRES_DB: steamcents
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U steamcents"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python -m unittest tests.test_parse -v
+      - run: python -m pytest -q
         env:
           PYTHONPATH: .
+          TEST_ADMIN_URL: postgresql://steamcents:steamcents@localhost:5432/postgres
