@@ -20,10 +20,12 @@ LOG_DIR = os.environ.get("LOG_DIR", "logs")
 
 MAX_FAILURES = int(os.environ.get("MAX_FAILURES", "5"))
 
-# recheck cadence per tier, in hours. this is politeness, not budget: at 10
-# requests a minute times 100 ids the whole catalog fits in about four hours.
+# recheck cadence per tier, in hours. still a guess, not fit to real change
+# data (only ~3k apps have ever had a second observation and that sample is
+# one lump, not a rate). picked to use under half the crawl's ~60k apps/hour
+# budget at current tier sizes, leaving room for the catalog to grow.
 # retune once there is a week of real change data to look at.
-TIER_HOURS = {0: 6, 1: 24, 2: 24 * 7}
+TIER_HOURS = {0: 2, 1: 12, 2: 24 * 3}
 CHANGED_RECENTLY_DAYS = 14
 
 API_ORIGINS = [
