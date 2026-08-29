@@ -117,10 +117,30 @@ backup. Push them somewhere else before you rely on them.
 
 ## The read API
 
-Not deployed yet. When `api/` lands, a Caddy service in
-`docker-compose.prod.yml` terminates TLS on `api.steamcents.com` and proxies to
-it. That is why the firewall opens 80 and 443 and why the DNS record wants to be
-in place early: Caddy needs the name to resolve before Let's Encrypt will issue.
+Caddy terminates TLS on `api.steamcents.com` and proxies to the `api` container.
+DNS has to resolve first or Let's Encrypt will not issue.
+
+```bash
+cd /opt/steamcents
+# .env needs API_DOMAIN=api.steamcents.com and API_ORIGINS set to the dashboard origin
+docker compose -f docker-compose.prod.yml up -d --build api caddy
+curl -s https://api.steamcents.com/health
+curl -s https://api.steamcents.com/stats | head -c 400
+```
+
+The API is read only and opens no write paths. It talks to Postgres over the
+compose network as `db`, while the sweep on the host uses `127.0.0.1`, so
+neither of them needs 5432 exposed publicly.
+
+If Caddy cannot get a certificate, the usual cause is DNS. Check the name
+resolves to the box, then `docker compose -f docker-compose.prod.yml logs caddy`.
+To get expiry warnings by mail, add a global block to the `Caddyfile`:
+
+```
+{
+	email you@example.com
+}
+```
 
 ## Rolling out a change
 

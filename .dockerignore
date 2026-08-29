@@ -1,0 +1,10 @@
+.git
+.github
+.venv
+logs
+backups
+infra
+web
+tests
+*.md
+.env
