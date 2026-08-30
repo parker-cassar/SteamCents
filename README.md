@@ -103,6 +103,19 @@ Needs a Postgres to talk to. It builds a throwaway `steamcents_test` database,
 runs every migration into it, and never touches the collection database. CI runs
 the same thing against a `postgres:16` service.
 
+## Dashboard
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Reads `NEXT_PUBLIC_API_URL` (`web/.env.local`, defaults to `http://localhost:8000`).
+Stats header, 30 day changes chart, biggest drops table, and a per-app
+`/app/{appid}` history page with a price sparkline. Not deployed yet, that
+needs the API live on the box first.
+
 ## Deploying
 
 See [DEPLOY.md](DEPLOY.md). Terraform for the Hetzner box, Postgres in Docker,
@@ -115,6 +128,7 @@ trusted.
 ```
 steamprice/     catalog, sweep, tiering
 api/            fastapi read api
+web/            next.js dashboard
 migrations/     schema, applied in order with a ledger table
 ops/            launchd plists, systemd units, backup script
 infra/          terraform for the hetzner box

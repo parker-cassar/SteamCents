@@ -7,7 +7,7 @@ venv/
 logs/
 
 # local notes, not in the repo
-AGENTS.md
+/AGENTS.md
 .cursor/
 DESIGN.md
 *DESIGN*.md
