@@ -1,27 +1,16 @@
 terraform {
   required_version = ">= 1.5"
   required_providers {
-    hcloud = {
-      source  = "hetznercloud/hcloud"
-      version = "~> 1.48"
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
     }
   }
 }
 
-variable "hcloud_token" {
-  type      = string
-  sensitive = true
-}
-
-variable "server_type" {
-  type        = string
-  default     = "cpx22"
-  description = "cax11 is arm and cheaper but nbg1 capacity comes and goes. cpx22 always allocates."
-}
-
-variable "location" {
+variable "instance_type" {
   type    = string
-  default = "nbg1"
+  default = "t4g.small"
 }
 
 variable "api_domain" {
@@ -32,7 +21,7 @@ variable "api_domain" {
 variable "acme_email" {
   type        = string
   default     = ""
-  description = "where letsencrypt sends expiry warnings. caddy works without one."
+  description = "letsencrypt expiry warnings. caddy works without one."
 }
 
 variable "repo_url" {
@@ -40,58 +29,109 @@ variable "repo_url" {
   default = "https://github.com/parker-cassar/steam_price.git"
 }
 
-provider "hcloud" {
-  token = var.hcloud_token
+variable "ssh_public_key_path" {
+  type    = string
+  default = "~/.ssh/steamcents.pub"
 }
 
-resource "hcloud_ssh_key" "me" {
-  name       = "steamcents"
-  public_key = file("~/.ssh/steamcents.pub")
+provider "aws" {
+  region = "us-east-2"
 }
 
-resource "hcloud_firewall" "fw" {
-  name = "steamcents-fw"
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
 
-  dynamic "rule" {
-    for_each = ["22", "80", "443"]
-    content {
-      direction  = "in"
-      protocol   = "tcp"
-      port       = rule.value
-      source_ips = ["0.0.0.0/0", "::/0"]
-    }
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssm/ubuntu-noble-24.04-arm64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
   }
 }
 
-resource "hcloud_server" "app" {
-  name         = "steamcents"
-  server_type  = var.server_type
-  image        = "ubuntu-24.04"
-  location     = var.location
-  ssh_keys     = [hcloud_ssh_key.me.id]
-  firewall_ids = [hcloud_firewall.fw.id]
+resource "aws_key_pair" "me" {
+  key_name   = "steamcents"
+  public_key = file(var.ssh_public_key_path)
+}
 
-  public_net {
-    ipv4_enabled = true
-    ipv6_enabled = true
+resource "aws_security_group" "app" {
+  name        = "steamcents"
+  description = "ssh, http, https"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "app" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  key_name               = aws_key_pair.me.key_name
+  vpc_security_group_ids = [aws_security_group.app.id]
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
   }
 
   user_data = templatefile("${path.module}/cloud-init.yaml", {
     repo_url   = var.repo_url
     api_domain = var.api_domain
     acme_email = var.acme_email
-    ssh_key    = file("~/.ssh/steamcents.pub")
+    ssh_key    = trimspace(file(var.ssh_public_key_path))
   })
+
+  tags = {
+    Name = "steamcents"
+  }
+}
+
+resource "aws_eip" "app" {
+  domain = "vpc"
+
+  instance = aws_instance.app.id
+
+  tags = {
+    Name = "steamcents"
+  }
 }
 
 output "ip" {
-  value = hcloud_server.app.ipv4_address
+  value = aws_eip.app.public_ip
 }
 
 output "ssh" {
-  value = "ssh -i ~/.ssh/steamcents deploy@${hcloud_server.app.ipv4_address}"
+  value = "ssh -i ~/.ssh/steamcents deploy@${aws_eip.app.public_ip}"
 }
 
 output "dns" {
-  value = "point ${var.api_domain} at ${hcloud_server.app.ipv4_address} before caddy can get a cert"
+  value = "point ${var.api_domain} A record at ${aws_eip.app.public_ip} before caddy can get a cert"
 }

@@ -51,4 +51,4 @@ runcmd:
   - install -d -o deploy -g deploy /opt/steamcents/backups /opt/steamcents/logs
   - systemctl restart ssh
 
-final_message: "steamcents box up after $UPTIME seconds. finish with DEPLOY.md."
+final_message: "steamcents box up after $UPTIME seconds. finish with DEPLOY-AWS.md."
