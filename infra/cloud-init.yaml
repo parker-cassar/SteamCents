@@ -11,6 +11,7 @@ users:
       - ${ssh_key}
 
 packages:
+  - awscli
   - ca-certificates
   - curl
   - git
@@ -28,6 +29,8 @@ write_files:
     content: |
       API_DOMAIN=${api_domain}
       ACME_EMAIL=${acme_email}
+      BACKUP_S3_BUCKET=${backup_bucket}
+      AWS_DEFAULT_REGION=us-east-2
 
 runcmd:
   - install -m 0755 -d /etc/apt/keyrings
@@ -51,4 +54,4 @@ runcmd:
   - install -d -o deploy -g deploy /opt/steamcents/backups /opt/steamcents/logs
   - systemctl restart ssh
 
-final_message: "steamcents box up after $UPTIME seconds. finish with DEPLOY-AWS.md."
+final_message: "steamcents box up after $UPTIME seconds. finish with DEPLOY.md."

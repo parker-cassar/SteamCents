@@ -38,3 +38,12 @@ ls -1t "$DIR"/steamcents-*.dump 2>/dev/null | tail -n "+$((KEEP + 1))" | while r
 done
 
 echo "$OUT ($SIZE bytes), keeping $KEEP"
+
+if [ -n "${BACKUP_S3_BUCKET:-}" ]; then
+  if command -v aws >/dev/null 2>&1; then
+    aws s3 cp "$OUT" "s3://${BACKUP_S3_BUCKET}/$(basename "$OUT")" --only-show-errors
+    echo "s3://${BACKUP_S3_BUCKET}/$(basename "$OUT")"
+  else
+    echo "BACKUP_S3_BUCKET set but aws cli missing" >&2
+  fi
+fi

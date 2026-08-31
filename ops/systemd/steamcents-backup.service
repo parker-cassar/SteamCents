@@ -5,4 +5,5 @@ Description=steamcents nightly postgres dump
 Type=oneshot
 User=deploy
 WorkingDirectory=/opt/steamcents
+EnvironmentFile=-/opt/steamcents.env
 ExecStart=/opt/steamcents/ops/backup.sh
