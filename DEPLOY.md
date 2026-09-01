@@ -49,15 +49,22 @@ terraform output ip
 terraform output backup_bucket
 ```
 
-Give cloud-init two or three minutes, then:
+Cloud-init clones the public repo URL in Terraform. If the repo is private, rsync
+from your laptop after the instance is up:
 
 ```bash
-ssh -i ~/.ssh/steamcents deploy@$(terraform output -raw ip)
-cloud-init status --wait
+rsync -az -e "ssh -i ~/.ssh/steamcents" \
+  --exclude '.git' --exclude '.venv' --exclude 'logs' --exclude 'backups' \
+  ./ deploy@$(terraform output -raw ip):/opt/steamcents/
 ```
 
-Repo lands at `/opt/steamcents`. `/opt/steamcents.env` has `BACKUP_S3_BUCKET`
-for nightly dumps.
+Your `~/.ssh/steamcents` key is passphrase-protected. Run `ssh-add
+~/.ssh/steamcents` once per session, or use EC2 Instance Connect (the deploy
+user accepts a one-time key pushed by the AWS CLI).
+
+Porkbun: add an **A** record for host `api` pointing at the Elastic IP. Remove
+any parking-page or URL-forward on that hostname. Let's Encrypt will fail until
+`dig api.steamcents.com` returns the EIP, not Porkbun's `207.207.210.x` addresses.
 
 ## Database up (empty schema only, not a fresh crawl)
 

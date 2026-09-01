@@ -8,7 +8,7 @@ Type=simple
 User=deploy
 WorkingDirectory=/opt/steamcents
 Environment=PYTHONPATH=/opt/steamcents
-ExecStart=/usr/bin/python3 -m steamprice.sweep
+ExecStart=/opt/steamcents/.venv/bin/python -m steamprice.sweep
 Restart=always
 RestartSec=30
 # the sweep closes its sweep_runs row on sigterm, so give it room to finish

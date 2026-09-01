@@ -8,4 +8,4 @@ Type=oneshot
 User=deploy
 WorkingDirectory=/opt/steamcents
 Environment=PYTHONPATH=/opt/steamcents
-ExecStart=/usr/bin/python3 -m steamprice.catalog
+ExecStart=/opt/steamcents/.venv/bin/python -m steamprice.catalog
