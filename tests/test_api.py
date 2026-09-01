@@ -123,6 +123,21 @@ def test_limits_are_capped(client):
     assert client.get("/apps/10/history?offset=-1").status_code == 422
 
 
+def test_blocked_titles_are_hidden(client, conn):
+    seed(conn, 10, "Fine Game", [2000, 1000])
+    seed(conn, 20, "Hentai Discount", [2000, 1000])
+
+    drops = client.get("/drops?days=30").json()["drops"]
+    assert [d["appid"] for d in drops] == [10]
+
+    assert client.get("/apps/20").status_code == 404
+    assert client.get("/apps/20/history").status_code == 404
+
+    seed(conn, 30, "Other", [1999, 999])
+    changes = client.get("/changes").json()["changes"]
+    assert {c["appid"] for c in changes} == {10, 30}
+
+
 def test_stats_reports_the_live_sweep(client, conn, apps, monkeypatch):
     ids = apps(10)
     monkeypatch.setattr(sweep, "fetch_appdetails", lambda i, cc=None: {

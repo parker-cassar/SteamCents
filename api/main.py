@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api import db
 from steamprice import config
+from steamprice.public_filter import is_blocked_name, sql_exclude_name
 
 app = FastAPI(title="steamcents", description="steam price history, read only")
 
@@ -98,7 +99,7 @@ def get_app(appid: int):
         LEFT JOIN app_latest_price p ON p.appid = a.appid AND p.country_code = %s
         WHERE a.appid = %s
     """, (config.COUNTRY, appid))
-    if row is None:
+    if row is None or is_blocked_name(row.get("name")):
         raise HTTPException(status_code=404, detail="unknown appid")
     return row
 
@@ -109,7 +110,8 @@ def history(
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
 ):
-    if db.one("SELECT 1 FROM apps WHERE appid = %s", (appid,)) is None:
+    row = db.one("SELECT name FROM apps WHERE appid = %s", (appid,))
+    if row is None or is_blocked_name(row.get("name")):
         raise HTTPException(status_code=404, detail="unknown appid")
     return {
         "appid": appid,
@@ -135,7 +137,7 @@ def changes(
         "since": since,
         "limit": limit,
         "offset": offset,
-        "changes": db.rows("""
+        "changes": db.rows(f"""
             SELECT c.appid, a.name, c.observed_at, c.currency,
                    c.prev_final_cents, c.final_cents, c.discount_pct
             FROM price_changes c
@@ -143,6 +145,7 @@ def changes(
             WHERE c.prev_final_cents IS NOT NULL
               AND c.country_code = %s
               AND (%s::timestamptz IS NULL OR c.observed_at >= %s)
+              AND {sql_exclude_name("a.name")}
             ORDER BY c.observed_at DESC
             LIMIT %s OFFSET %s
         """, (config.COUNTRY, since, since, limit, offset)),
@@ -172,11 +175,12 @@ def drops(
         "days": days,
         "limit": limit,
         "offset": offset,
-        "drops": db.rows("""
+        "drops": db.rows(f"""
             SELECT appid, name, observed_at, currency,
                    prev_final_cents, final_cents, discount_pct, drop_cents, drop_pct
             FROM price_drops
             WHERE country_code = %s AND observed_at >= now() - make_interval(days => %s)
+              AND {sql_exclude_name("name")}
             ORDER BY drop_pct DESC, drop_cents DESC
             LIMIT %s OFFSET %s
         """, (config.COUNTRY, days, limit, offset)),

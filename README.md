@@ -2,7 +2,10 @@
 
 Tracks US Steam prices across the whole catalog. Not a deal site. Just a collector that remembers what things cost and when they moved.
 
-Steam's storefront is slow and undocumented if you poke it wrong, so this stays polite: batch `appdetails` (100 ids per request), sleep between calls, back off on 429s. Postgres holds the catalog and a delta-only price history. New / never-checked apps get checked first.
+The store API throttles by IP. The usual number is ~200 requests per 5 minutes.
+I batch `appdetails` at 100 appids per call and run about 10 req/min to stay
+under that. Back off on 429s. Postgres holds the catalog and a delta-only price
+history. Never-checked apps go first.
 
 Apps are rechecked on a tier: 6 hours if the price moved in the last two weeks,
 24 hours if it is priced and quiet, 7 days if Steam reports no price at all
@@ -12,19 +15,19 @@ About a third of the catalog has no price, and Steam says so with
 
 ## Where it is right now
 
-Numbers from the running instance, all of them queryable rather than claimed.
-Regenerate them with `python3 -m steamprice.sweep --status` and the `/stats`
-endpoint.
+Snapshot from prod (Aug 2026). `/stats` or `python3 -m steamprice.sweep --status`
+for live numbers.
 
-| | |
-|---|---|
-| apps in the catalog | 247,929 (247,815 live) |
-| apps checked at least once | 247,815, so full coverage |
-| price observations | 169,178 across 164,464 apps |
-| apps Steam reports no price for | about a third of the catalog |
-| history starts | 2026-08-21 |
-| collection rate | 10 requests/min, 100 ids each, so about 60K apps/hour |
-| 429s and errors since run tracking started | 0 and 0 |
+Catalog is 247,929 apps, 247,815 live. Every live app has been checked at
+least once. 169,178 price observations on 164,464 apps. History starts
+2026-08-21.
+
+About a third of the catalog has no price. That is normal: F2P, DLC, videos,
+hardware. Steam returns `{"success": true, "data": []}` and I count it as
+answered, not a miss.
+
+Sweep runs at 10 req/min, 100 appids per batch (~60k apps/hour). So far:
+0 429s, 0 errors in `sweep_runs`.
 
 Delta-only storage is the point of the schema, and it is measurable: in the
 window covered by `sweep_runs`, 51,700 checks produced 5,369 rows, which is

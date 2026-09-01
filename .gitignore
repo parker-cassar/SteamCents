@@ -13,7 +13,7 @@ DESIGN.md
 *DESIGN*.md
 infra/.terraform/
 infra/*.tfstate
-infra/*.tfstate.backup
+infra/*.tfstate*backup
 infra/.terraform.lock.hcl
 infra/.terraform.tfstate.lock.info
 backups/
