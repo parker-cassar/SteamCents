@@ -1,6 +1,6 @@
-# steamcents
+# [steamcents.com](https://steamcents.com)
 
-Tracks US Steam prices across the whole catalog. Not a deal site. Just a collector that remembers what things cost and when they moved.
+Tracks US Steam prices at domain [steamcents.com](https://steamcents.com) across the whole catalog. Not a deal site. Just a collector that remembers what things cost and when they moved.
 
 The store API throttles by IP. The usual number is ~200 requests per 5 minutes.
 I batch `appdetails` at 100 appids per call and run about 10 req/min to stay
