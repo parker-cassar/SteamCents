@@ -10,7 +10,7 @@ ADMIN_URL = os.environ.get(
 )
 TEST_DB = os.environ.get("TEST_DB", "steamcents_test")
 
-TABLES = "price_observations, apps, sweep_runs, catalog_runs"
+TABLES = "price_observations, apps, sweep_runs, catalog_runs, briefs"
 
 
 @pytest.fixture(scope="session")
