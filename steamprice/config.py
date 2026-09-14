@@ -34,3 +34,10 @@ API_ORIGINS = [
         "https://steamcents.com,https://www.steamcents.com,http://localhost:3000",
     ).split(",") if o.strip()
 ]
+
+# weekly brief: gemini generateContent. BRIEF_LLM=mock skips the network (tests).
+BRIEF_LLM = os.environ.get("BRIEF_LLM", "gemini")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+BRIEF_MODEL = os.environ.get("BRIEF_MODEL", "gemini-2.0-flash")
+BRIEF_DAYS = int(os.environ.get("BRIEF_DAYS", "7"))
+BRIEF_PROMPT_VERSION = os.environ.get("BRIEF_PROMPT_VERSION", "v1")
