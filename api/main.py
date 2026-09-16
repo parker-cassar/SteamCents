@@ -185,3 +185,24 @@ def drops(
             LIMIT %s OFFSET %s
         """, (config.COUNTRY, days, limit, offset)),
     }
+
+
+@app.get("/briefs/latest")
+def briefs_latest():
+    row = db.one("""
+        SELECT id, period_start, period_end, brief_json, model, prompt_version, created_at
+        FROM briefs
+        ORDER BY created_at DESC
+        LIMIT 1
+    """)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no briefs yet")
+    return {
+        "id": row["id"],
+        "period_start": row["period_start"],
+        "period_end": row["period_end"],
+        "brief": row["brief_json"],
+        "model": row["model"],
+        "prompt_version": row["prompt_version"],
+        "created_at": row["created_at"],
+    }

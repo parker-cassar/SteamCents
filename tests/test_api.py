@@ -138,6 +138,30 @@ def test_blocked_titles_are_hidden(client, conn):
     assert {c["appid"] for c in changes} == {10, 30}
 
 
+def test_briefs_latest_404_when_empty(client):
+    assert client.get("/briefs/latest").status_code == 404
+
+
+def test_briefs_latest_returns_stored_json(client, conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO briefs (
+              period_start, period_end, facts_json, brief_json, model, prompt_version
+            ) VALUES (
+              current_date - 7, current_date,
+              '{}'::jsonb,
+              '{"headline":"hi","summary":"there","highlights":[],"watchouts":[],"coverage_note":"ok"}'::jsonb,
+              'mock', 'v1'
+            )
+        """)
+    conn.commit()
+
+    body = client.get("/briefs/latest").json()
+    assert body["brief"]["headline"] == "hi"
+    assert body["model"] == "mock"
+    assert body["prompt_version"] == "v1"
+
+
 def test_stats_reports_the_live_sweep(client, conn, apps, monkeypatch):
     ids = apps(10)
     monkeypatch.setattr(sweep, "fetch_appdetails", lambda i, cc=None: {
