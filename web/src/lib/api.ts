@@ -62,10 +62,34 @@ export type Observation = {
   discount_pct: number;
 };
 
+export type BriefBody = {
+  headline: string;
+  summary: string;
+  highlights: { claim: string; source: string }[];
+  watchouts: string[];
+  coverage_note: string;
+};
+
+export type Brief = {
+  id: number;
+  period_start: string;
+  period_end: string;
+  brief: BriefBody;
+  model: string;
+  prompt_version: string;
+  created_at: string;
+};
+
 export const api = {
   stats: () => get<Stats>("/stats"),
   changesDaily: (days = 30) => get<{ series: DailyChanges[] }>(`/changes/daily?days=${days}`),
   drops: (days = 7, limit = 30) => get<{ drops: Drop[] }>(`/drops?days=${days}&limit=${limit}`),
+  briefLatest: async () => {
+    const res = await fetch(`${BASE}/briefs/latest`, { cache: "no-store" });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`/briefs/latest -> ${res.status}`);
+    return res.json() as Promise<Brief>;
+  },
   app: (appid: number) => get<AppDetail>(`/apps/${appid}`),
   history: (appid: number, limit = 500) =>
     get<{ observations: Observation[] }>(`/apps/${appid}/history?limit=${limit}`),
