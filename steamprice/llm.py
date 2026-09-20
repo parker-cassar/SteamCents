@@ -35,8 +35,9 @@ def complete_json(system, user, model=None):
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {
             "temperature": 0,
-            "maxOutputTokens": 1024,
+            "maxOutputTokens": 8192,
             "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }).encode()
 
