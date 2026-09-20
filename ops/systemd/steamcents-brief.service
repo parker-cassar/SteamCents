@@ -1,0 +1,11 @@
+[Unit]
+Description=steamcents weekly price brief
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/opt/steamcents
+Environment=PYTHONPATH=/opt/steamcents
+ExecStart=/opt/steamcents/.venv/bin/python -m steamprice.brief

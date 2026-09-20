@@ -1,0 +1,10 @@
+[Unit]
+Description=run the steamcents weekly price brief
+
+[Timer]
+OnCalendar=Mon *-*-* 05:30:00
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

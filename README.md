@@ -92,9 +92,16 @@ PYTHONPATH=. python3 -m uvicorn api.main:app --reload
 ```
 
 `/health`, `/stats`, `/apps/{appid}`, `/apps/{appid}/history`, `/changes`,
-`/changes/daily`, `/drops`. Read only, paginated, CORS limited to the origins in
-`API_ORIGINS`. The heavy lifting is in views (`migrations/007_rollups.sql`) so
-the handlers stay thin.
+`/changes/daily`, `/drops`, `/briefs/latest`. Read only, paginated, CORS limited
+to the origins in `API_ORIGINS`. The heavy lifting is in views
+(`migrations/007_rollups.sql`) so the handlers stay thin.
+
+Weekly brief: `python3 -m steamprice.brief` builds a frozen Postgres fact
+payload, asks Gemini for structured JSON, validates every highlight `source`
+against that payload, then stores the row. The dashboard reads
+`/briefs/latest` only (no live model calls). Needs `GEMINI_API_KEY` in
+`.env`. Use `--dry-run` to print facts, `--force` to replace the period's row,
+`--status` for recent briefs. Monday timer: `steamcents-brief.timer`.
 
 ## Tests
 
@@ -115,9 +122,9 @@ npm run dev
 ```
 
 Reads `NEXT_PUBLIC_API_URL` (`web/.env.local`, defaults to `http://localhost:8000`).
-Stats header, 30 day changes chart, biggest drops table, and a per-app
-`/app/{appid}` history page with a price sparkline. Not deployed yet, that
-needs the API live on the box first.
+Stats header, weekly brief (from stored `/briefs/latest`), 30 day changes chart,
+biggest drops table, and a per-app `/app/{appid}` history page with a price
+sparkline.
 
 ## Deploying
 
@@ -129,13 +136,13 @@ trusted.
 ## Layout
 
 ```
-steamprice/     catalog, sweep, tiering
+steamprice/     catalog, sweep, tiering, weekly brief
 api/            fastapi read api
 web/            next.js dashboard
 migrations/     schema, applied in order with a ledger table
 ops/            launchd plists, systemd units, backup script
 infra/          terraform for the hetzner box
-tests/          fixtures, parse, schedule, sweep, catalog, api
+tests/          fixtures, parse, schedule, sweep, catalog, api, brief
 probe.py        early Steam API experiments
 ```
 

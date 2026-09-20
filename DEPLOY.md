@@ -123,6 +123,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now steamcents-sweep.service
 sudo systemctl enable --now steamcents-catalog.timer
 sudo systemctl enable --now steamcents-backup.timer
+sudo systemctl enable --now steamcents-brief.timer
 
 PYTHONPATH=. python3 -m steamprice.sweep --status
 ```
@@ -176,12 +177,33 @@ terraform destroy
 Releases the Elastic IP, instance, security group, and S3 bucket (dumps inside
 it). EBS is destroyed with the instance.
 
+## Weekly brief
+
+```bash
+# on the box, after GEMINI_API_KEY is in /opt/steamcents/.env
+python3 -m steamprice.catalog migrate
+python3 -m steamprice.brief --dry-run   # facts only
+python3 -m steamprice.brief             # generate + store
+curl -s https://api.steamcents.com/briefs/latest | head -c 400
+
+sudo cp ops/systemd/steamcents-brief.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now steamcents-brief.timer
+```
+
+Rebuild the API container after pulling so `/briefs/latest` exists:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build api
+```
+
 ## Rolling out a change
 
 ```bash
 cd /opt/steamcents && git pull
 python3 -m steamprice.catalog migrate
 sudo systemctl restart steamcents-sweep
+docker compose -f docker-compose.prod.yml up -d --build api
 ```
 
 Check with `--status` that the run id actually changed.
