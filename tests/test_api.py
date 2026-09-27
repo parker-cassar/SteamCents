@@ -102,6 +102,16 @@ def test_drops_exclude_rises(client, conn):
     assert float(drops[0]["drop_pct"]) == 50.0
 
 
+def test_drops_balance_savings_and_percentage_rankings(client, conn):
+    seed(conn, 10, "Big Savings", [10000, 5000])
+    seed(conn, 20, "Big Percentage", [1000, 10])
+    seed(conn, 30, "Second Savings", [8000, 4000])
+    seed(conn, 40, "Second Percentage", [1000, 20])
+
+    drops = client.get("/drops?days=30&limit=4").json()["drops"]
+    assert [d["appid"] for d in drops] == [10, 20, 30, 40]
+
+
 def test_daily_series_splits_drops_and_rises(client, conn):
     seed(conn, 10, "Fell", [2000, 1000])
     seed(conn, 20, "Rose", [1000, 2000])
@@ -126,12 +136,14 @@ def test_limits_are_capped(client):
 def test_blocked_titles_are_hidden(client, conn):
     seed(conn, 10, "Fine Game", [2000, 1000])
     seed(conn, 20, "Hentai Discount", [2000, 1000])
+    seed(conn, 40, "Desktop Sex Doll", [2000, 1000])
 
     drops = client.get("/drops?days=30").json()["drops"]
     assert [d["appid"] for d in drops] == [10]
 
     assert client.get("/apps/20").status_code == 404
     assert client.get("/apps/20/history").status_code == 404
+    assert client.get("/apps/40").status_code == 404
 
     seed(conn, 30, "Other", [1999, 999])
     changes = client.get("/changes").json()["changes"]

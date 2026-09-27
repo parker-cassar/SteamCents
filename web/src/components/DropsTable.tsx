@@ -13,6 +13,7 @@ export default function DropsTable({ drops }: { drops: Drop[] }) {
           <th className="py-2 pr-2">app</th>
           <th className="py-2 pr-2">was</th>
           <th className="py-2 pr-2">now</th>
+          <th className="py-2 pr-2">savings</th>
           <th className="py-2 pr-2">off</th>
         </tr>
       </thead>
@@ -28,6 +29,9 @@ export default function DropsTable({ drops }: { drops: Drop[] }) {
               {money(d.prev_final_cents, d.currency)}
             </td>
             <td className="py-2 pr-2 font-medium">{money(d.final_cents, d.currency)}</td>
+            <td className="py-2 pr-2 text-emerald-600 dark:text-emerald-400">
+              {money(d.drop_cents, d.currency)}
+            </td>
             <td className="py-2 pr-2 text-emerald-600 dark:text-emerald-400">-{d.drop_pct}%</td>
           </tr>
         ))}

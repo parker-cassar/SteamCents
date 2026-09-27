@@ -11,7 +11,7 @@ BLOCKED = (
     "erotic",
     "lewd",
     "nsfw",
-    "sex game",
+    "sex",
     "adult game",
     "masturbat",
     "orgasm",

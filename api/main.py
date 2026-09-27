@@ -171,19 +171,57 @@ def drops(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
+    target = limit + offset
+
+    def ranked(order_by):
+        return db.rows(f"""
+            WITH latest AS (
+                SELECT DISTINCT ON (appid)
+                       appid, name, observed_at, currency,
+                       prev_final_cents, final_cents, discount_pct,
+                       drop_cents, drop_pct
+                FROM price_drops
+                WHERE country_code = %s
+                  AND observed_at >= now() - make_interval(days => %s)
+                  AND {sql_exclude_name("name")}
+                ORDER BY appid, observed_at DESC
+            )
+            SELECT *
+            FROM latest
+            ORDER BY {order_by}
+            LIMIT %s
+        """, (config.COUNTRY, days, target))
+
+    by_savings = ranked("drop_cents DESC, drop_pct DESC, observed_at DESC")
+    by_percent = ranked("drop_pct DESC, drop_cents DESC, observed_at DESC")
+
+    balanced = []
+    seen = set()
+    positions = [0, 0]
+    groups = [by_savings, by_percent]
+    while len(balanced) < target:
+        preferred = len(balanced) % 2
+        picked = None
+        for group_index in (preferred, 1 - preferred):
+            group = groups[group_index]
+            while positions[group_index] < len(group):
+                row = group[positions[group_index]]
+                positions[group_index] += 1
+                if row["appid"] not in seen:
+                    picked = row
+                    break
+            if picked is not None:
+                break
+        if picked is None:
+            break
+        seen.add(picked["appid"])
+        balanced.append(picked)
+
     return {
         "days": days,
         "limit": limit,
         "offset": offset,
-        "drops": db.rows(f"""
-            SELECT appid, name, observed_at, currency,
-                   prev_final_cents, final_cents, discount_pct, drop_cents, drop_pct
-            FROM price_drops
-            WHERE country_code = %s AND observed_at >= now() - make_interval(days => %s)
-              AND {sql_exclude_name("name")}
-            ORDER BY drop_pct DESC, drop_cents DESC
-            LIMIT %s OFFSET %s
-        """, (config.COUNTRY, days, limit, offset)),
+        "drops": balanced[offset:target],
     }
 
 
