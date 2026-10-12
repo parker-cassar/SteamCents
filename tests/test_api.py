@@ -112,6 +112,20 @@ def test_drops_balance_savings_and_percentage_rankings(client, conn):
     assert [d["appid"] for d in drops] == [10, 20, 30, 40]
 
 
+def test_drops_cap_near_duplicate_title_families(client, conn):
+    # spam like numbered expansion passes should not eat the whole table
+    for i, n in enumerate(range(40, 48)):
+        seed(conn, 100 + i, f"Cyberphobia: Prologue - Expansion Pass {n}", [19999, 199])
+    seed(conn, 10, "Real Deal A", [10000, 5000])
+    seed(conn, 20, "Real Deal B", [1000, 10])
+
+    drops = client.get("/drops?days=30&limit=10").json()["drops"]
+    names = [d["name"] for d in drops]
+    cyber = [n for n in names if n.startswith("Cyberphobia")]
+    assert len(cyber) == 1
+    assert {d["appid"] for d in drops} >= {10, 20}
+
+
 def test_daily_series_splits_drops_and_rises(client, conn):
     seed(conn, 10, "Fell", [2000, 1000])
     seed(conn, 20, "Rose", [1000, 2000])
