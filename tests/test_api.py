@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api import db as apidb
+from api.cache import store as cache
 from api.main import app
 from steamprice import config, db, sweep
 
@@ -10,8 +11,10 @@ from steamprice import config, db, sweep
 def client(conn, monkeypatch):
     # the pool is lazy, so dropping it here makes it rebuild against the test db
     apidb.reset()
+    cache.clear()
     with TestClient(app) as c:
         yield c
+    cache.clear()
     apidb.reset()
 
 
