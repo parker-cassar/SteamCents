@@ -8,13 +8,17 @@ export default async function AppPage({ params }: { params: Promise<{ appid: str
   if (!Number.isInteger(appid)) notFound();
 
   let app;
+  let observations;
   try {
-    app = await api.app(appid);
+    const [detail, history] = await Promise.all([
+      api.app(appid),
+      api.history(appid),
+    ]);
+    app = detail;
+    observations = history.observations;
   } catch {
     notFound();
   }
-
-  const { observations } = await api.history(appid);
 
   return (
     <main className="max-w-2xl mx-auto p-6 space-y-6">
