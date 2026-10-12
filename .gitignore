@@ -8,6 +8,7 @@ logs/
 
 # local notes, not in the repo
 /AGENTS.md
+/STEAMCENTS_CODEBASE_EXPORT.md
 .cursor/
 DESIGN.md
 *DESIGN*.md
