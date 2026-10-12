@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api import db
 from steamprice import config
-from steamprice.public_filter import is_blocked_name, sql_exclude_name
+from steamprice.public_filter import diversify_drops, is_blocked_name, sql_exclude_name
 
 app = FastAPI(title="steamcents", description="steam price history, read only")
 
@@ -172,6 +172,8 @@ def drops(
     offset: int = Query(0, ge=0),
 ):
     target = limit + offset
+    # overfetch so family caps and interleave still fill the page
+    pool = max(target * 8, 200)
 
     def ranked(order_by):
         return db.rows(f"""
@@ -190,32 +192,11 @@ def drops(
             FROM latest
             ORDER BY {order_by}
             LIMIT %s
-        """, (config.COUNTRY, days, target))
+        """, (config.COUNTRY, days, pool))
 
     by_savings = ranked("drop_cents DESC, drop_pct DESC, observed_at DESC")
     by_percent = ranked("drop_pct DESC, drop_cents DESC, observed_at DESC")
-
-    balanced = []
-    seen = set()
-    positions = [0, 0]
-    groups = [by_savings, by_percent]
-    while len(balanced) < target:
-        preferred = len(balanced) % 2
-        picked = None
-        for group_index in (preferred, 1 - preferred):
-            group = groups[group_index]
-            while positions[group_index] < len(group):
-                row = group[positions[group_index]]
-                positions[group_index] += 1
-                if row["appid"] not in seen:
-                    picked = row
-                    break
-            if picked is not None:
-                break
-        if picked is None:
-            break
-        seen.add(picked["appid"])
-        balanced.append(picked)
+    balanced = diversify_drops(by_savings, by_percent, target)
 
     return {
         "days": days,
