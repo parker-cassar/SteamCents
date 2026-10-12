@@ -175,27 +175,60 @@ def drops(
     # overfetch so family caps and interleave still fill the page
     pool = max(target * 8, 200)
 
-    def ranked(order_by):
-        return db.rows(f"""
-            WITH latest AS (
-                SELECT DISTINCT ON (appid)
-                       appid, name, observed_at, currency,
-                       prev_final_cents, final_cents, discount_pct,
-                       drop_cents, drop_pct
-                FROM price_drops
-                WHERE country_code = %s
-                  AND observed_at >= now() - make_interval(days => %s)
-                  AND {sql_exclude_name("name")}
-                ORDER BY appid, observed_at DESC
-            )
-            SELECT *
-            FROM latest
-            ORDER BY {order_by}
-            LIMIT %s
-        """, (config.COUNTRY, days, pool))
+    # only window apps that moved recently. the old price_drops view ran
+    # lag() over the entire observations table on every request.
+    latest = db.rows(f"""
+        WITH recent_apps AS (
+            SELECT DISTINCT appid
+            FROM price_observations
+            WHERE country_code = %s
+              AND observed_at >= now() - make_interval(days => %s)
+        ),
+        scoped AS (
+            SELECT
+                o.appid, o.country_code, o.observed_at, o.currency,
+                o.final_cents, o.discount_pct,
+                lag(o.final_cents) OVER w AS prev_final_cents
+            FROM price_observations o
+            JOIN recent_apps r USING (appid)
+            WHERE o.country_code = %s
+            WINDOW w AS (PARTITION BY o.appid ORDER BY o.observed_at)
+        ),
+        drops AS (
+            SELECT
+                s.appid, a.name, s.observed_at, s.currency,
+                s.prev_final_cents, s.final_cents, s.discount_pct,
+                s.prev_final_cents - s.final_cents AS drop_cents,
+                round(
+                    100.0 * (s.prev_final_cents - s.final_cents)
+                    / s.prev_final_cents, 1
+                ) AS drop_pct
+            FROM scoped s
+            JOIN apps a USING (appid)
+            WHERE s.prev_final_cents IS NOT NULL
+              AND s.prev_final_cents > 0
+              AND s.final_cents < s.prev_final_cents
+              AND s.observed_at >= now() - make_interval(days => %s)
+              AND {sql_exclude_name("a.name")}
+        )
+        SELECT DISTINCT ON (appid)
+               appid, name, observed_at, currency,
+               prev_final_cents, final_cents, discount_pct,
+               drop_cents, drop_pct
+        FROM drops
+        ORDER BY appid, observed_at DESC
+    """, (config.COUNTRY, days, config.COUNTRY, days))
 
-    by_savings = ranked("drop_cents DESC, drop_pct DESC, observed_at DESC")
-    by_percent = ranked("drop_pct DESC, drop_cents DESC, observed_at DESC")
+    by_savings = sorted(
+        latest,
+        key=lambda r: (r["drop_cents"], float(r["drop_pct"]), r["observed_at"]),
+        reverse=True,
+    )[:pool]
+    by_percent = sorted(
+        latest,
+        key=lambda r: (float(r["drop_pct"]), r["drop_cents"], r["observed_at"]),
+        reverse=True,
+    )[:pool]
     balanced = diversify_drops(by_savings, by_percent, target)
 
     return {
