@@ -4,6 +4,8 @@ import DailyChangesChart from "@/components/DailyChangesChart";
 import DropsTable from "@/components/DropsTable";
 import WeeklyBrief from "@/components/WeeklyBrief";
 
+export const revalidate = 120;
+
 export default async function Home() {
   const [stats, changes, drops, brief] = await Promise.all([
     api.stats(),
