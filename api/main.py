@@ -4,8 +4,12 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import db
+from api.cache import store as cache
 from steamprice import config
 from steamprice.public_filter import diversify_drops, is_blocked_name, sql_exclude_name
+
+# homepage data barely moves between sweeps; skip redoing heavy views every hit
+CACHE_TTL_S = 120
 
 app = FastAPI(title="steamcents", description="steam price history, read only")
 
@@ -28,65 +32,68 @@ def health():
 
 @app.get("/stats")
 def stats():
-    catalog = db.one("""
-        SELECT count(*) AS apps,
-               count(*) FILTER (WHERE delisted_at IS NULL) AS live,
-               count(*) FILTER (WHERE last_checked_at IS NOT NULL
-                                AND delisted_at IS NULL) AS checked,
-               count(*) FILTER (WHERE no_price_seen_at IS NOT NULL) AS unpriced,
-               count(*) FILTER (WHERE consecutive_failures >= %s) AS parked
-        FROM apps
-    """, (config.MAX_FAILURES,))
+    def build():
+        catalog = db.one("""
+            SELECT count(*) AS apps,
+                   count(*) FILTER (WHERE delisted_at IS NULL) AS live,
+                   count(*) FILTER (WHERE last_checked_at IS NOT NULL
+                                    AND delisted_at IS NULL) AS checked,
+                   count(*) FILTER (WHERE no_price_seen_at IS NOT NULL) AS unpriced,
+                   count(*) FILTER (WHERE consecutive_failures >= %s) AS parked
+            FROM apps
+        """, (config.MAX_FAILURES,))
 
-    prices = db.one("""
-        SELECT count(*) AS observations,
-               count(DISTINCT appid) AS apps_with_price,
-               min(observed_at) AS first_observed,
-               max(observed_at) AS last_observed
-        FROM price_observations
-    """)
+        prices = db.one("""
+            SELECT count(*) AS observations,
+                   count(DISTINCT appid) AS apps_with_price,
+                   min(observed_at) AS first_observed,
+                   max(observed_at) AS last_observed
+            FROM price_observations
+        """)
 
-    sweep = db.one("""
-        SELECT id, started_at, heartbeat_at, ended_at, exit_reason,
-               batches, apps_checked, changes, http_429s, errors,
-               extract(epoch FROM now() - heartbeat_at) AS heartbeat_age_s
-        FROM sweep_runs ORDER BY id DESC LIMIT 1
-    """)
+        sweep = db.one("""
+            SELECT id, started_at, heartbeat_at, ended_at, exit_reason,
+                   batches, apps_checked, changes, http_429s, errors,
+                   extract(epoch FROM now() - heartbeat_at) AS heartbeat_age_s
+            FROM sweep_runs ORDER BY id DESC LIMIT 1
+        """)
 
-    catalog_run = db.one("""
-        SELECT id, started_at, exit_reason, remote_apps, live, newly_delisted
-        FROM catalog_runs WHERE exit_reason = 'ok' ORDER BY id DESC LIMIT 1
-    """)
+        catalog_run = db.one("""
+            SELECT id, started_at, exit_reason, remote_apps, live, newly_delisted
+            FROM catalog_runs WHERE exit_reason = 'ok' ORDER BY id DESC LIMIT 1
+        """)
 
-    totals = db.one("""
-        SELECT coalesce(sum(apps_checked), 0) AS checks,
-               coalesce(sum(changes), 0) AS changes,
-               coalesce(sum(http_429s), 0) AS http_429s,
-               coalesce(sum(errors), 0) AS errors,
-               min(started_at) AS tracked_since
-        FROM sweep_runs
-    """)
+        totals = db.one("""
+            SELECT coalesce(sum(apps_checked), 0) AS checks,
+                   coalesce(sum(changes), 0) AS changes,
+                   coalesce(sum(http_429s), 0) AS http_429s,
+                   coalesce(sum(errors), 0) AS errors,
+                   min(started_at) AS tracked_since
+            FROM sweep_runs
+        """)
 
-    days = None
-    if prices["first_observed"] and prices["last_observed"]:
-        days = round(
-            (prices["last_observed"] - prices["first_observed"]).total_seconds() / 86400, 2
-        )
+        days = None
+        if prices["first_observed"] and prices["last_observed"]:
+            days = round(
+                (prices["last_observed"] - prices["first_observed"]).total_seconds() / 86400, 2
+            )
 
-    live = catalog["live"] or 1
-    # checked counts live apps only, so this cannot run past 100
-    return {
-        "catalog": catalog,
-        "prices": dict(prices, days_of_history=days),
-        "coverage_pct": round(100.0 * catalog["checked"] / live, 2),
-        "sweep": sweep,
-        "catalog_run": catalog_run,
-        "totals": totals,
-        "tiers": db.rows(
-            "SELECT tier, count(*) AS apps FROM apps WHERE delisted_at IS NULL "
-            "GROUP BY tier ORDER BY tier"
-        ),
-    }
+        live = catalog["live"] or 1
+        # checked counts live apps only, so this cannot run past 100
+        return {
+            "catalog": catalog,
+            "prices": dict(prices, days_of_history=days),
+            "coverage_pct": round(100.0 * catalog["checked"] / live, 2),
+            "sweep": sweep,
+            "catalog_run": catalog_run,
+            "totals": totals,
+            "tiers": db.rows(
+                "SELECT tier, count(*) AS apps FROM apps WHERE delisted_at IS NULL "
+                "GROUP BY tier ORDER BY tier"
+            ),
+        }
+
+    return cache.get_or_set("stats", CACHE_TTL_S, build)
 
 
 @app.get("/apps/{appid}")
@@ -154,15 +161,18 @@ def changes(
 
 @app.get("/changes/daily")
 def changes_daily(days: int = Query(30, ge=1, le=365)):
-    return {
-        "days": days,
-        "series": db.rows("""
-            SELECT day, changes, drops, rises, apps
-            FROM price_changes_daily
-            WHERE country_code = %s AND day >= current_date - %s::int
-            ORDER BY day
-        """, (config.COUNTRY, days)),
-    }
+    def build():
+        return {
+            "days": days,
+            "series": db.rows("""
+                SELECT day, changes, drops, rises, apps
+                FROM price_changes_daily
+                WHERE country_code = %s AND day >= current_date - %s::int
+                ORDER BY day
+            """, (config.COUNTRY, days)),
+        }
+
+    return cache.get_or_set(("changes_daily", days), CACHE_TTL_S, build)
 
 
 @app.get("/drops")
@@ -175,62 +185,64 @@ def drops(
     # overfetch so family caps and interleave still fill the page
     pool = max(target * 8, 200)
 
-    # only window apps that moved recently. the old price_drops view ran
-    # lag() over the entire observations table on every request.
-    latest = db.rows(f"""
-        WITH recent_apps AS (
-            SELECT DISTINCT appid
-            FROM price_observations
-            WHERE country_code = %s
-              AND observed_at >= now() - make_interval(days => %s)
-        ),
-        scoped AS (
-            SELECT
-                o.appid, o.country_code, o.observed_at, o.currency,
-                o.final_cents, o.discount_pct,
-                lag(o.final_cents) OVER w AS prev_final_cents
-            FROM price_observations o
-            JOIN recent_apps r USING (appid)
-            WHERE o.country_code = %s
-            WINDOW w AS (PARTITION BY o.appid ORDER BY o.observed_at)
-        ),
-        drops AS (
-            SELECT
-                s.appid, a.name, s.observed_at, s.currency,
-                s.prev_final_cents, s.final_cents, s.discount_pct,
-                s.prev_final_cents - s.final_cents AS drop_cents,
-                round(
-                    100.0 * (s.prev_final_cents - s.final_cents)
-                    / s.prev_final_cents, 1
-                ) AS drop_pct
-            FROM scoped s
-            JOIN apps a USING (appid)
-            WHERE s.prev_final_cents IS NOT NULL
-              AND s.prev_final_cents > 0
-              AND s.final_cents < s.prev_final_cents
-              AND s.observed_at >= now() - make_interval(days => %s)
-              AND {sql_exclude_name("a.name")}
-        )
-        SELECT DISTINCT ON (appid)
-               appid, name, observed_at, currency,
-               prev_final_cents, final_cents, discount_pct,
-               drop_cents, drop_pct
-        FROM drops
-        ORDER BY appid, observed_at DESC
-    """, (config.COUNTRY, days, config.COUNTRY, days))
+    def build():
+        # only window apps that moved recently. the old price_drops view ran
+        # lag() over the entire observations table on every request.
+        latest = db.rows(f"""
+            WITH recent_apps AS (
+                SELECT DISTINCT appid
+                FROM price_observations
+                WHERE country_code = %s
+                  AND observed_at >= now() - make_interval(days => %s)
+            ),
+            scoped AS (
+                SELECT
+                    o.appid, o.country_code, o.observed_at, o.currency,
+                    o.final_cents, o.discount_pct,
+                    lag(o.final_cents) OVER w AS prev_final_cents
+                FROM price_observations o
+                JOIN recent_apps r USING (appid)
+                WHERE o.country_code = %s
+                WINDOW w AS (PARTITION BY o.appid ORDER BY o.observed_at)
+            ),
+            drops AS (
+                SELECT
+                    s.appid, a.name, s.observed_at, s.currency,
+                    s.prev_final_cents, s.final_cents, s.discount_pct,
+                    s.prev_final_cents - s.final_cents AS drop_cents,
+                    round(
+                        100.0 * (s.prev_final_cents - s.final_cents)
+                        / s.prev_final_cents, 1
+                    ) AS drop_pct
+                FROM scoped s
+                JOIN apps a USING (appid)
+                WHERE s.prev_final_cents IS NOT NULL
+                  AND s.prev_final_cents > 0
+                  AND s.final_cents < s.prev_final_cents
+                  AND s.observed_at >= now() - make_interval(days => %s)
+                  AND {sql_exclude_name("a.name")}
+            )
+            SELECT DISTINCT ON (appid)
+                   appid, name, observed_at, currency,
+                   prev_final_cents, final_cents, discount_pct,
+                   drop_cents, drop_pct
+            FROM drops
+            ORDER BY appid, observed_at DESC
+        """, (config.COUNTRY, days, config.COUNTRY, days))
 
-    by_savings = sorted(
-        latest,
-        key=lambda r: (r["drop_cents"], float(r["drop_pct"]), r["observed_at"]),
-        reverse=True,
-    )[:pool]
-    by_percent = sorted(
-        latest,
-        key=lambda r: (float(r["drop_pct"]), r["drop_cents"], r["observed_at"]),
-        reverse=True,
-    )[:pool]
-    balanced = diversify_drops(by_savings, by_percent, target)
+        by_savings = sorted(
+            latest,
+            key=lambda r: (r["drop_cents"], float(r["drop_pct"]), r["observed_at"]),
+            reverse=True,
+        )[:pool]
+        by_percent = sorted(
+            latest,
+            key=lambda r: (float(r["drop_pct"]), r["drop_cents"], r["observed_at"]),
+            reverse=True,
+        )[:pool]
+        return diversify_drops(by_savings, by_percent, target)
 
+    balanced = cache.get_or_set(("drops", days, target), CACHE_TTL_S, build)
     return {
         "days": days,
         "limit": limit,
