@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from steamprice import config
-from steamprice.public_filter import sql_exclude_name
+from steamprice.public_filter import diversify_drops, sql_exclude_name
 
 
 def _jsonable(v):
@@ -77,6 +77,8 @@ def build_facts(cur, days=None, drop_limit=15):
         for r in cur.fetchall()
     ]
 
+    # pull a wider pool, then cap near-duplicate title families so the brief
+    # does not fill with numbered expansion-pass spam
     cur.execute(f"""
         SELECT appid, name, observed_at, currency,
                prev_final_cents, final_cents, discount_pct, drop_cents, drop_pct
@@ -85,12 +87,19 @@ def build_facts(cur, days=None, drop_limit=15):
           AND {sql_exclude_name("name")}
         ORDER BY drop_pct DESC, drop_cents DESC
         LIMIT %s
-    """, (country, days, drop_limit))
+    """, (country, days, max(drop_limit * 8, 80)))
     cols = (
         "appid", "name", "observed_at", "currency", "prev_final_cents",
         "final_cents", "discount_pct", "drop_cents", "drop_pct",
     )
-    drops = [_row(dict(zip(cols, r))) for r in cur.fetchall()]
+    pool = [_row(dict(zip(cols, r))) for r in cur.fetchall()]
+    by_percent = pool
+    by_savings = sorted(
+        pool,
+        key=lambda r: (r["drop_cents"], float(r["drop_pct"])),
+        reverse=True,
+    )
+    drops = diversify_drops(by_savings, by_percent, drop_limit)
 
     today = date.today()
     return {
