@@ -1,7 +1,10 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// homepage numbers only move on sweep cadence; 2 min is plenty fresh
+const FETCH_INIT = { next: { revalidate: 120 } } as const;
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
+  const res = await fetch(`${BASE}${path}`, FETCH_INIT);
   if (!res.ok) {
     throw new Error(`${path} -> ${res.status}`);
   }
@@ -85,7 +88,7 @@ export const api = {
   changesDaily: (days = 30) => get<{ series: DailyChanges[] }>(`/changes/daily?days=${days}`),
   drops: (days = 7, limit = 30) => get<{ drops: Drop[] }>(`/drops?days=${days}&limit=${limit}`),
   briefLatest: async () => {
-    const res = await fetch(`${BASE}/briefs/latest`, { cache: "no-store" });
+    const res = await fetch(`${BASE}/briefs/latest`, FETCH_INIT);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`/briefs/latest -> ${res.status}`);
     return res.json() as Promise<Brief>;
