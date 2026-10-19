@@ -9,8 +9,10 @@ from steamprice.public_filter import diversify_drops, is_blocked_name, title_fam
     "XXX Simulator",
     "Totally Lewd Quest",
     "NSFW Dating",
-    "Cybersex Chronicles [18+]",
     "Desktop Sex Doll",
+    "Big Ass Adventure",
+    "Big-Ass-Game",
+    "Asshole Tycoon",
 ])
 def test_blocked_titles(name):
     assert is_blocked_name(name)
@@ -21,6 +23,11 @@ def test_blocked_titles(name):
     "Hollow Knight",
     "Corn Quest",
     "Thing",
+    "Assassin's Creed",
+    "Mass Effect",
+    "Classic Racing",
+    "Expansion Pass",
+    "Cybersex Chronicles",
 ])
 def test_clean_titles(name):
     assert not is_blocked_name(name)

@@ -1,23 +1,20 @@
 import re
 
 # crude title blocklist for the public dashboard until we have mature flags
-# from appdetails. substring match on lowercased names.
-BLOCKED = (
+# from appdetails. longer stems stay substring; short/ambiguous tokens are
+# whole-word only so we don't nuke Assassin's Creed / Expansion Pass / etc.
+BLOCKED_SUBSTRING = (
     "hentai",
     "porn",
-    "xxx",
     "nude",
     "nudity",
     "erotic",
     "lewd",
     "nsfw",
-    "sex",
     "adult game",
     "masturbat",
     "orgasm",
     "blowjob",
-    "fap ",
-    " fap",
     "boobs",
     "tits",
     "penis",
@@ -25,9 +22,23 @@ BLOCKED = (
     "strip club",
     "stripclub",
     "onlyfans",
+    "asshole",
 )
 
-_PATTERN = re.compile("|".join(re.escape(t) for t in BLOCKED), re.I)
+BLOCKED_WORD = (
+    "ass",
+    "sex",
+    "fap",
+    "xxx",
+)
+
+_PATTERN = re.compile(
+    "|".join(
+        [re.escape(t) for t in BLOCKED_SUBSTRING]
+        + [rf"\b{re.escape(t)}\b" for t in BLOCKED_WORD]
+    ),
+    re.I,
+)
 
 # strip numbered dlc / pass spam so "Foo - Expansion Pass 47" collapses with
 # its siblings. kept intentionally greedy on trailing junk, not on core titles.
@@ -55,8 +66,11 @@ def is_blocked_name(name: str | None) -> bool:
 
 
 def sql_exclude_name(column: str) -> str:
-    # postgres regex, case insensitive
-    terms = "|".join(re.escape(t) for t in BLOCKED)
+    # postgres ~* uses \y for word boundaries
+    terms = "|".join(
+        [re.escape(t) for t in BLOCKED_SUBSTRING]
+        + [rf"\y{re.escape(t)}\y" for t in BLOCKED_WORD]
+    )
     return f"NOT (lower({column}) ~* '{terms}')"
 
 
